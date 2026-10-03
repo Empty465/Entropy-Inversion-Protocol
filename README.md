@@ -1,18 +1,26 @@
-# Orbital Strike
+## 궤도 타격 (Orbital Strike)
 
-Minecraft Forge 1.20.1 mod. The Orbital Strike Requestor is available in the
-Creative Tools & Utilities tab and has no crafting recipe.
+Minecraft Forge 1.20.1 모드입니다. 궤도 타격 요청기는 크리에이티브 모드의
+도구 및 유틸리티 탭에서 얻을 수 있으며, 제작법은 없습니다.
 
-Right-click to enter targeting mode. A 200-block-radius vertical cylinder is
-shown around the aimed block. Hold left-click for one second to request the
-strike; right-click or Escape cancels targeting. After a five-second
-countdown/cutscene, the server removes vulnerable entities in the cylinder and
-clears blocks from the dimension's minimum to maximum build height. Creative and
-spectator players are excluded from entity removal. The requestor is not
-consumed and has a ten-second cooldown. The terrain change is destructive and
-permanent; back up worlds before use.
+우클릭하면 조준 모드에 진입합니다. 조준한 블록을 중심으로 반경 200블록의
+수직 원기둥이 표시됩니다. 좌클릭을 1초 동안 길게 누르면 타격을 요청하며,
+우클릭 또는 Esc 키를 누르면 조준이 취소됩니다. 5초간 카운트다운 및 컷신이
+재생된 뒤, 서버가 범위 내의 피해 가능한 엔티티를 제거하고 차원의 최저 높이부터
+최고 높이까지 블록을 소멸시킵니다. 크리에이티브 및 관전 모드 플레이어는
+엔티티 제거 대상에서 제외됩니다. 요청기는 소모되지 않으며, 10초의 재사용
+대기시간이 있습니다. 지형 변화는 영구적이고 파괴적이므로 사용 전에 월드를
+백업하세요.
 
-The target boundary is drawn in-world and as a HUD radius preview.
+타격 범위는 월드 내 경계선과 HUD의 원형 미리보기로 표시됩니다.
 
-Block clearing is processed in small chunk batches to limit single-tick stalls.
-The strike loads affected chunks as it processes them.
+한 틱에 발생하는 서버 정지를 줄이기 위해 블록 제거 작업을 작은 청크 단위로
+나누어 처리합니다. 작업이 진행되면서 타격 범위의 청크를 로드합니다.
+
+## 이후 추가 또는 수정할 기능
+
+- 타격 범위 조정 기능 (config가 아닌 조준 모드에서 마우스 휠로 조정. 따라서 조정 모드에서는 마우스 휠로 핫바 슬롯 이동 불가하게 처리)
+- 컷씬 좀 더 멋지게
+- 타격 요청기의 시각적 효과 개선 (예: 빛, 입자 등)
+- 타격 요청기의 사운드 효과 추가 및 개선
+- 블록 파괴 최적화
