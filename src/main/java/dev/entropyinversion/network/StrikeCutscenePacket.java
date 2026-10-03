@@ -1,6 +1,6 @@
-package dev.orbitalstrike.network;
+package dev.entropyinversion.network;
 
-import dev.orbitalstrike.client.CutsceneOverlay;
+import dev.entropyinversion.client.CutsceneOverlay;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;

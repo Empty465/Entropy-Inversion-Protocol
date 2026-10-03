@@ -1,6 +1,6 @@
-package dev.orbitalstrike.item;
+package dev.entropyinversion.item;
 
-import dev.orbitalstrike.client.TargetingMode;
+import dev.entropyinversion.client.TargetingMode;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
@@ -15,10 +15,13 @@ import net.minecraftforge.fml.DistExecutor;
 
 import java.util.List;
 
-public final class OrbitalRequestorItem extends Item {
+public final class EntropyInversionRequestorItem extends Item {
     public static final double TARGETING_RANGE = 512.0D;
+    public static final int MIN_STRIKE_RADIUS = 1;
+    public static final int MAX_STRIKE_RADIUS = 200;
+    public static final int DEFAULT_STRIKE_RADIUS = 200;
 
-    public OrbitalRequestorItem(Properties properties) {
+    public EntropyInversionRequestorItem(Properties properties) {
         super(properties);
     }
 
@@ -29,11 +32,11 @@ public final class OrbitalRequestorItem extends Item {
             List<Component> tooltip,
             TooltipFlag flag
     ) {
-        tooltip.add(Component.translatable("item.orbitalstrike.orbital_requestor.tooltip")
+        tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.tooltip")
                 .withStyle(ChatFormatting.GRAY));
-        tooltip.add(Component.translatable("item.orbitalstrike.orbital_requestor.radius")
+        tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.radius")
                 .withStyle(ChatFormatting.RED));
-        tooltip.add(Component.translatable("item.orbitalstrike.orbital_requestor.confirm")
+        tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.confirm")
                 .withStyle(ChatFormatting.YELLOW));
     }
 

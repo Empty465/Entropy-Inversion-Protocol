@@ -1,11 +1,11 @@
-package dev.orbitalstrike.client;
+package dev.entropyinversion.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import dev.orbitalstrike.OrbitalStrikeMod;
-import dev.orbitalstrike.item.OrbitalRequestorItem;
-import dev.orbitalstrike.network.RequestStrikePacket;
-import dev.orbitalstrike.network.StrikeNetwork;
+import dev.entropyinversion.EntropyInversionMod;
+import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.network.RequestStrikePacket;
+import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
@@ -26,17 +26,17 @@ import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
 
 @Mod.EventBusSubscriber(
-        modid = OrbitalStrikeMod.MOD_ID,
+        modid = EntropyInversionMod.MOD_ID,
         value = Dist.CLIENT,
         bus = Mod.EventBusSubscriber.Bus.FORGE
 )
 public final class TargetingMode {
     private static final int HOLD_TO_CONFIRM_TICKS = 20;
     private static final int CIRCLE_SEGMENTS = 128;
-    private static final double STRIKE_RADIUS = 200.0D;
     private static boolean active;
     private static boolean leftButtonDown;
     private static int holdTicks;
+    private static int strikeRadius = EntropyInversionRequestorItem.DEFAULT_STRIKE_RADIUS;
     private static Vec3 target;
 
     private TargetingMode() {
@@ -50,7 +50,27 @@ public final class TargetingMode {
         active = true;
         leftButtonDown = false;
         holdTicks = 0;
+        strikeRadius = EntropyInversionRequestorItem.DEFAULT_STRIKE_RADIUS;
         updateTarget(minecraft.player);
+    }
+
+    @SubscribeEvent
+    public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
+        if (!active) {
+            return;
+        }
+
+        event.setCanceled(true);
+        double scrollDelta = event.getScrollDelta();
+        if (scrollDelta != 0.0D) {
+            strikeRadius = Math.max(
+                    EntropyInversionRequestorItem.MIN_STRIKE_RADIUS,
+                    Math.min(
+                            EntropyInversionRequestorItem.MAX_STRIKE_RADIUS,
+                            strikeRadius + (int) Math.signum(scrollDelta)
+                    )
+            );
+        }
     }
 
     @SubscribeEvent
@@ -107,11 +127,11 @@ public final class TargetingMode {
                 holdTicks = 0;
                 if (target == null) {
                     player.displayClientMessage(
-                            Component.translatable("message.orbitalstrike.no_target"),
+                            Component.translatable("message.entropyinversion.no_target"),
                             true
                     );
                 } else if (minecraft.getConnection() != null) {
-                    StrikeNetwork.CHANNEL.sendToServer(new RequestStrikePacket());
+                    StrikeNetwork.CHANNEL.sendToServer(new RequestStrikePacket(strikeRadius));
                 }
             }
         }
@@ -137,13 +157,46 @@ public final class TargetingMode {
         int topY = minecraft.level.getMaxBuildHeight();
         int targetY = BlockPos.containing(target).getY();
 
-        drawRing(lines, poseStack, target.x, target.z, targetY + 0.08D, 0.1F, 0.98F, 1.0F, 1.0F);
-        drawRing(lines, poseStack, target.x, target.z, bottomY + 0.02D, 0.1F, 0.85F, 1.0F, 0.9F);
-        drawRing(lines, poseStack, target.x, target.z, topY - 0.02D, 0.1F, 0.85F, 1.0F, 0.9F);
+        drawRing(
+                lines,
+                poseStack,
+                target.x,
+                target.z,
+                targetY + 0.08D,
+                strikeRadius,
+                0.1F,
+                0.98F,
+                1.0F,
+                1.0F
+        );
+        drawRing(
+                lines,
+                poseStack,
+                target.x,
+                target.z,
+                bottomY + 0.02D,
+                strikeRadius,
+                0.1F,
+                0.85F,
+                1.0F,
+                0.9F
+        );
+        drawRing(
+                lines,
+                poseStack,
+                target.x,
+                target.z,
+                topY - 0.02D,
+                strikeRadius,
+                0.1F,
+                0.85F,
+                1.0F,
+                0.9F
+        );
         for (int i = 0; i < 16; i++) {
             double angle = Math.PI * 2.0D * i / 16.0D;
-            double x = target.x + Math.cos(angle) * STRIKE_RADIUS;
-            double z = target.z + Math.sin(angle) * STRIKE_RADIUS;
+            double x = target.x + Math.cos(angle) * strikeRadius;
+            double z = target.z + Math.sin(angle) * strikeRadius;
             drawLine(
                     lines,
                     poseStack,
@@ -177,7 +230,7 @@ public final class TargetingMode {
         event.getGuiGraphics().fill(centerX - 115, y - 6, centerX + 115, y + 43, 0xCC081522);
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
-                Component.translatable("gui.orbitalstrike.targeting.title"),
+                Component.translatable("gui.entropyinversion.targeting.title"),
                 centerX,
                 y,
                 0xFF8EEBFF
@@ -185,9 +238,9 @@ public final class TargetingMode {
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 target == null
-                        ? Component.translatable("gui.orbitalstrike.targeting.no_target")
+                        ? Component.translatable("gui.entropyinversion.targeting.no_target")
                         : Component.translatable(
-                                "gui.orbitalstrike.targeting.target",
+                                "gui.entropyinversion.targeting.target",
                                 (int) Math.floor(target.x),
                                 (int) Math.floor(target.y),
                                 (int) Math.floor(target.z)
@@ -198,7 +251,7 @@ public final class TargetingMode {
         );
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
-                Component.translatable("gui.orbitalstrike.targeting.hold"),
+                Component.translatable("gui.entropyinversion.targeting.hold"),
                 centerX,
                 y + 25,
                 0xFFFFD27A
@@ -229,12 +282,12 @@ public final class TargetingMode {
                 panelLeft,
                 panelTop,
                 panelLeft + 98,
-                panelTop + 120,
+                panelTop + 136,
                 0xD9081522
         );
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
-                Component.translatable("gui.orbitalstrike.targeting.radius"),
+                Component.translatable("gui.entropyinversion.targeting.radius"),
                 centerX,
                 panelTop + 5,
                 0xFF8EEBFF
@@ -259,17 +312,27 @@ public final class TargetingMode {
 
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
-                Component.translatable("gui.orbitalstrike.targeting.radius_value"),
+                Component.translatable(
+                        "gui.entropyinversion.targeting.radius_value",
+                        strikeRadius
+                ),
                 centerX,
                 centerY + radius + 12,
                 0xFFFFFFFF
         );
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
-                Component.translatable("gui.orbitalstrike.targeting.height"),
+                Component.translatable("gui.entropyinversion.targeting.height"),
                 centerX,
                 centerY + radius + 23,
                 0xFFB7C9D8
+        );
+        event.getGuiGraphics().drawCenteredString(
+                Minecraft.getInstance().font,
+                Component.translatable("gui.entropyinversion.targeting.radius_control"),
+                centerX,
+                centerY + radius + 35,
+                0xFFFFD27A
         );
     }
 
@@ -297,7 +360,7 @@ public final class TargetingMode {
     }
 
     private static void updateTarget(Player player) {
-        HitResult hit = player.pick(OrbitalRequestorItem.TARGETING_RANGE, 1.0F, false);
+        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, false);
         target = hit instanceof BlockHitResult blockHit
                 && hit.getType() == HitResult.Type.BLOCK
                 ? blockHit.getLocation()
@@ -306,9 +369,9 @@ public final class TargetingMode {
 
     private static boolean hasRequestor(Player player) {
         return player.getItemInHand(InteractionHand.MAIN_HAND)
-                .is(OrbitalStrikeMod.ORBITAL_REQUESTOR.get())
+                .is(EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get())
                 || player.getItemInHand(InteractionHand.OFF_HAND)
-                .is(OrbitalStrikeMod.ORBITAL_REQUESTOR.get());
+                .is(EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get());
     }
 
     private static void cancel() {
@@ -324,6 +387,7 @@ public final class TargetingMode {
             double centerX,
             double centerZ,
             double y,
+            double radius,
             float red,
             float green,
             float blue,
@@ -335,12 +399,12 @@ public final class TargetingMode {
             drawLine(
                     lines,
                     poseStack,
-                    centerX + Math.cos(a0) * STRIKE_RADIUS,
+                    centerX + Math.cos(a0) * radius,
                     y,
-                    centerZ + Math.sin(a0) * STRIKE_RADIUS,
-                    centerX + Math.cos(a1) * STRIKE_RADIUS,
+                    centerZ + Math.sin(a0) * radius,
+                    centerX + Math.cos(a1) * radius,
                     y,
-                    centerZ + Math.sin(a1) * STRIKE_RADIUS,
+                    centerZ + Math.sin(a1) * radius,
                     red,
                     green,
                     blue,

@@ -1,7 +1,7 @@
-package dev.orbitalstrike.world;
+package dev.entropyinversion.world;
 
-import dev.orbitalstrike.network.StrikeCutscenePacket;
-import dev.orbitalstrike.network.StrikeNetwork;
+import dev.entropyinversion.network.StrikeCutscenePacket;
+import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -25,19 +25,19 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class StrikeManager {
-    private static final int STRIKE_RADIUS = 200;
     private static final int CUTSCENE_TICKS = 100;
     private static final int CHUNKS_PER_TICK = 2;
     private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
 
-    public static void schedule(ServerLevel level, Vec3 target, UUID owner) {
+    public static void schedule(ServerLevel level, Vec3 target, UUID owner, int radius) {
         LevelState state = LEVEL_STATES.computeIfAbsent(level, ignored -> new LevelState());
         state.scheduled.add(new ScheduledStrike(
                 level.getGameTime() + CUTSCENE_TICKS,
                 target.x,
                 target.y,
                 target.z,
-                owner
+                owner,
+                radius
         ));
         Player player = level.getPlayerByUUID(owner);
         if (player instanceof ServerPlayer serverPlayer) {
@@ -79,7 +79,7 @@ public final class StrikeManager {
                 if (owner != null) {
                     owner.displayClientMessage(
                             net.minecraft.network.chat.Component.translatable(
-                                    "message.orbitalstrike.complete"
+                                    "message.entropyinversion.complete"
                             ),
                             true
                     );
@@ -93,7 +93,7 @@ public final class StrikeManager {
     }
 
     private static void impact(ServerLevel level, ScheduledStrike strike) {
-        double radius = STRIKE_RADIUS;
+        double radius = strike.radius;
         AABB area = new AABB(
                 strike.x - radius,
                 level.getMinBuildHeight(),
@@ -102,7 +102,7 @@ public final class StrikeManager {
                 level.getMaxBuildHeight(),
                 strike.z + radius + 1.0D
         );
-        removeEntities(level, area, strike.x, strike.z);
+        removeEntities(level, area, strike.x, strike.z, strike.radius);
         level.playSound(
                 null,
                 BlockPos.containing(strike.x, strike.y, strike.z),
@@ -116,11 +116,11 @@ public final class StrikeManager {
     private static DestructionJob createJob(ScheduledStrike strike) {
         int centerX = (int) Math.floor(strike.x);
         int centerZ = (int) Math.floor(strike.z);
-        int minChunkX = Math.floorDiv(centerX - STRIKE_RADIUS, 16);
-        int maxChunkX = Math.floorDiv(centerX + STRIKE_RADIUS, 16);
-        int minChunkZ = Math.floorDiv(centerZ - STRIKE_RADIUS, 16);
-        int maxChunkZ = Math.floorDiv(centerZ + STRIKE_RADIUS, 16);
-        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+        int minChunkX = Math.floorDiv(centerX - strike.radius, 16);
+        int maxChunkX = Math.floorDiv(centerX + strike.radius, 16);
+        int minChunkZ = Math.floorDiv(centerZ - strike.radius, 16);
+        int maxChunkZ = Math.floorDiv(centerZ + strike.radius, 16);
+        double radiusSquared = strike.radius * (double) strike.radius;
         List<ChunkPos> chunks = new ArrayList<>();
 
         for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
@@ -142,7 +142,13 @@ public final class StrikeManager {
             double dz = pos.getMinBlockZ() + 8.0D - strike.z;
             return dx * dx + dz * dz;
         }));
-        return new DestructionJob(new ArrayDeque<>(chunks), strike.owner, strike.x, strike.z);
+        return new DestructionJob(
+                new ArrayDeque<>(chunks),
+                strike.owner,
+                strike.x,
+                strike.z,
+                strike.radius
+        );
     }
 
     private static void destroyChunk(ServerLevel level, DestructionJob job, ChunkPos chunkPos) {
@@ -151,12 +157,13 @@ public final class StrikeManager {
         int minZ = chunkPos.getMinBlockZ();
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
-        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+        double radiusSquared = job.radius * (double) job.radius;
         removeEntities(
                 level,
                 new AABB(minX, minY, minZ, minX + 16.0D, maxY, minZ + 16.0D),
                 job.x,
-                job.z
+                job.z,
+                job.radius
         );
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
@@ -180,8 +187,14 @@ public final class StrikeManager {
         }
     }
 
-    private static void removeEntities(ServerLevel level, AABB area, double x, double z) {
-        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+    private static void removeEntities(
+            ServerLevel level,
+            AABB area,
+            double x,
+            double z,
+            int radius
+    ) {
+        double radiusSquared = radius * (double) radius;
         List<Entity> entities = level.getEntities(
                 (Entity) null,
                 area,
@@ -213,13 +226,15 @@ public final class StrikeManager {
         private final double y;
         private final double z;
         private final UUID owner;
+        private final int radius;
 
-        private ScheduledStrike(long dueAt, double x, double y, double z, UUID owner) {
+        private ScheduledStrike(long dueAt, double x, double y, double z, UUID owner, int radius) {
             this.dueAt = dueAt;
             this.x = x;
             this.y = y;
             this.z = z;
             this.owner = owner;
+            this.radius = radius;
         }
     }
 
@@ -228,12 +243,20 @@ public final class StrikeManager {
         private final UUID owner;
         private final double x;
         private final double z;
+        private final int radius;
 
-        private DestructionJob(ArrayDeque<ChunkPos> chunks, UUID owner, double x, double z) {
+        private DestructionJob(
+                ArrayDeque<ChunkPos> chunks,
+                UUID owner,
+                double x,
+                double z,
+                int radius
+        ) {
             this.chunks = chunks;
             this.owner = owner;
             this.x = x;
             this.z = z;
+            this.radius = radius;
         }
     }
 }

@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "entropyinversion:item/entropy_inversion_requestor"
+  }
+}

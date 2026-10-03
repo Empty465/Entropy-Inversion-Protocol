@@ -1,7 +1,7 @@
-package dev.orbitalstrike.network;
+package dev.entropyinversion.network;
 
-import dev.orbitalstrike.item.OrbitalRequestorItem;
-import dev.orbitalstrike.world.StrikeManager;
+import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.world.StrikeManager;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -13,11 +13,18 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 public final class RequestStrikePacket {
+    private final int radius;
+
+    public RequestStrikePacket(int radius) {
+        this.radius = radius;
+    }
+
     public static void encode(RequestStrikePacket packet, FriendlyByteBuf buffer) {
+        buffer.writeVarInt(packet.radius);
     }
 
     public static RequestStrikePacket decode(FriendlyByteBuf buffer) {
-        return new RequestStrikePacket();
+        return new RequestStrikePacket(buffer.readVarInt());
     }
 
     public static void handle(
@@ -32,38 +39,54 @@ public final class RequestStrikePacket {
                 return;
             }
 
-            if (player.getCooldowns().isOnCooldown(
-                    dev.orbitalstrike.OrbitalStrikeMod.ORBITAL_REQUESTOR.get())) {
+            if (packet.radius < EntropyInversionRequestorItem.MIN_STRIKE_RADIUS
+                    || packet.radius > EntropyInversionRequestorItem.MAX_STRIKE_RADIUS) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.translatable(
-                                "message.orbitalstrike.cooldown"
+                                "message.entropyinversion.invalid_radius"
                         ),
                         true
                 );
                 return;
             }
 
-            HitResult hit = player.pick(OrbitalRequestorItem.TARGETING_RANGE, 0.0F, false);
+            if (player.getCooldowns().isOnCooldown(
+                    dev.entropyinversion.EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get())) {
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.translatable(
+                                "message.entropyinversion.cooldown"
+                        ),
+                        true
+                );
+                return;
+            }
+
+            HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 0.0F, false);
             if (!(hit instanceof BlockHitResult blockHit)
                     || hit.getType() != HitResult.Type.BLOCK
                     || !player.serverLevel().hasChunkAt(blockHit.getBlockPos())) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.translatable(
-                                "message.orbitalstrike.no_target"
+                                "message.entropyinversion.no_target"
                         ),
                         true
                 );
                 return;
             }
 
-            StrikeManager.schedule(player.serverLevel(), blockHit.getLocation(), player.getUUID());
+            StrikeManager.schedule(
+                    player.serverLevel(),
+                    blockHit.getLocation(),
+                    player.getUUID(),
+                    packet.radius
+            );
             player.getCooldowns().addCooldown(
-                    dev.orbitalstrike.OrbitalStrikeMod.ORBITAL_REQUESTOR.get(),
+                    dev.entropyinversion.EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get(),
                     200
             );
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.translatable(
-                            "message.orbitalstrike.requested",
+                            "message.entropyinversion.requested",
                             blockHit.getBlockPos().getX(),
                             blockHit.getBlockPos().getY(),
                             blockHit.getBlockPos().getZ()
@@ -75,6 +98,6 @@ public final class RequestStrikePacket {
     }
 
     private static boolean hasRequestor(ItemStack stack) {
-        return stack.is(dev.orbitalstrike.OrbitalStrikeMod.ORBITAL_REQUESTOR.get());
+        return stack.is(dev.entropyinversion.EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get());
     }
 }

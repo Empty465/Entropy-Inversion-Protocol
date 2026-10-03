@@ -1,0 +1,22 @@
+{
+  "item.entropyinversion.entropy_inversion_requestor": "엔트로피 역전 요청기",
+  "item.entropyinversion.entropy_inversion_requestor.tooltip": "512블록 이내의 블록을 조준하고 우클릭하세요.",
+  "item.entropyinversion.entropy_inversion_requestor.radius": "반경 1~200블록, 월드 전체 높이의 블록과 엔티티를 소멸시킵니다.",
+  "item.entropyinversion.entropy_inversion_requestor.confirm": "좌클릭을 1초 동안 길게 눌러 확정하세요.",
+  "message.entropyinversion.no_target": "512블록 이내의 블록을 조준하세요.",
+  "message.entropyinversion.unloaded_target": "조준한 청크가 아직 로드되지 않았습니다.",
+  "message.entropyinversion.invalid_radius": "타격 반경이 유효하지 않습니다.",
+  "message.entropyinversion.cooldown": "요청기가 재사용 대기 중입니다.",
+  "message.entropyinversion.requested": "%1$s, %2$s, %3$s 좌표에 엔트로피 역전 타격을 요청했습니다.",
+  "message.entropyinversion.complete": "엔트로피 역전 타격 범위 정리가 완료되었습니다.",
+  "gui.entropyinversion.targeting.title": "엔트로피 역전 조준 모드",
+  "gui.entropyinversion.targeting.no_target": "사거리 내에 조준 가능한 블록이 없습니다",
+  "gui.entropyinversion.targeting.target": "목표  %1$s, %2$s, %3$s",
+  "gui.entropyinversion.targeting.hold": "좌클릭 길게 눌러 요청 · 우클릭 또는 Esc로 취소",
+  "gui.entropyinversion.targeting.radius": "타격 범위",
+  "gui.entropyinversion.targeting.radius_value": "반경 %1$s블록",
+  "gui.entropyinversion.targeting.radius_control": "마우스 휠로 조정",
+  "gui.entropyinversion.targeting.height": "월드 전체 높이",
+  "gui.entropyinversion.cutscene.title": "엔트로피 역전 무기 접근 중",
+  "gui.entropyinversion.cutscene.target": "목표  %1$s, %2$s"
+}

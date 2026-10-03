@@ -1,0 +1,22 @@
+{
+  "item.entropyinversion.entropy_inversion_requestor": "Entropy Inversion Requestor",
+  "item.entropyinversion.entropy_inversion_requestor.tooltip": "Aim at a block within 512 blocks and right-click.",
+  "item.entropyinversion.entropy_inversion_requestor.radius": "Destroys blocks and entities in a 1-200 block radius column.",
+  "item.entropyinversion.entropy_inversion_requestor.confirm": "Hold left-click for 1 second to confirm.",
+  "message.entropyinversion.no_target": "Aim at a block within 512 blocks.",
+  "message.entropyinversion.unloaded_target": "That target chunk is not loaded.",
+  "message.entropyinversion.invalid_radius": "The strike radius is invalid.",
+  "message.entropyinversion.cooldown": "The requestor is still cooling down.",
+  "message.entropyinversion.requested": "Entropy inversion strike requested at %1$s, %2$s, %3$s.",
+  "message.entropyinversion.complete": "Entropy inversion strike zone cleared.",
+  "gui.entropyinversion.targeting.title": "ENTROPY INVERSION TARGETING MODE",
+  "gui.entropyinversion.targeting.no_target": "No block in range",
+  "gui.entropyinversion.targeting.target": "TARGET  %1$s, %2$s, %3$s",
+  "gui.entropyinversion.targeting.hold": "Hold left-click to confirm · Right-click or Esc to cancel",
+  "gui.entropyinversion.targeting.radius": "STRIKE ZONE",
+  "gui.entropyinversion.targeting.radius_value": "RADIUS %1$s",
+  "gui.entropyinversion.targeting.radius_control": "Scroll to adjust",
+  "gui.entropyinversion.targeting.height": "WORLD HEIGHT",
+  "gui.entropyinversion.cutscene.title": "ENTROPY INVERSION WEAPON INBOUND",
+  "gui.entropyinversion.cutscene.target": "TARGET  %1$s, %2$s"
+}

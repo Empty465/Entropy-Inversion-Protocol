@@ -1,4 +1,4 @@
-package dev.orbitalstrike.client;
+package dev.entropyinversion.client;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -10,7 +10,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
 @Mod.EventBusSubscriber(
-        modid = "orbitalstrike",
+        modid = "entropyinversion",
         value = Dist.CLIENT,
         bus = Mod.EventBusSubscriber.Bus.FORGE
 )
@@ -69,7 +69,7 @@ public final class CutsceneOverlay {
         event.getGuiGraphics().fill(0, 0, width, height, 0x55030A18);
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
-                Component.translatable("gui.orbitalstrike.cutscene.title"),
+                Component.translatable("gui.entropyinversion.cutscene.title"),
                 centerX,
                 height / 5,
                 0xFFE7F4FF
@@ -77,7 +77,7 @@ public final class CutsceneOverlay {
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 Component.translatable(
-                        "gui.orbitalstrike.cutscene.target",
+                        "gui.entropyinversion.cutscene.target",
                         (int) Math.floor(targetX),
                         (int) Math.floor(targetZ)
                 ),
