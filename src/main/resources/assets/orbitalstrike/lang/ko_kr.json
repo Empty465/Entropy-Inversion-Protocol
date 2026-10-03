@@ -1,0 +1,12 @@
+{
+  "item.orbitalstrike.orbital_requestor": "궤도 타격 요청기",
+  "item.orbitalstrike.orbital_requestor.tooltip": "512블록 이내의 블록을 조준하고 우클릭하세요.",
+  "item.orbitalstrike.orbital_requestor.radius": "반경 200블록, 월드 전체 높이의 블록과 엔티티를 소멸시킵니다.",
+  "message.orbitalstrike.no_target": "512블록 이내의 블록을 조준하세요.",
+  "message.orbitalstrike.unloaded_target": "조준한 청크가 아직 로드되지 않았습니다.",
+  "message.orbitalstrike.cooldown": "요청기가 재사용 대기 중입니다.",
+  "message.orbitalstrike.requested": "%1$s, %2$s, %3$s 좌표에 궤도 타격을 요청했습니다.",
+  "message.orbitalstrike.complete": "궤도 타격 범위 정리가 완료되었습니다.",
+  "gui.orbitalstrike.cutscene.title": "궤도 타격 접근 중",
+  "gui.orbitalstrike.cutscene.target": "목표  %1$s, %2$s"
+}

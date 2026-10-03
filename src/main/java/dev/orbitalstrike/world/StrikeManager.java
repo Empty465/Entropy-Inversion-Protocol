@@ -1,0 +1,237 @@
+package dev.orbitalstrike.world;
+
+import dev.orbitalstrike.network.StrikeCutscenePacket;
+import dev.orbitalstrike.network.StrikeNetwork;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.network.PacketDistributor;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+public final class StrikeManager {
+    private static final int STRIKE_RADIUS = 200;
+    private static final int CUTSCENE_TICKS = 100;
+    private static final int CHUNKS_PER_TICK = 2;
+    private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
+
+    public static void schedule(ServerLevel level, Vec3 target, UUID owner) {
+        LevelState state = LEVEL_STATES.computeIfAbsent(level, ignored -> new LevelState());
+        state.scheduled.add(new ScheduledStrike(
+                level.getGameTime() + CUTSCENE_TICKS,
+                target.x,
+                target.y,
+                target.z,
+                owner
+        ));
+        Player player = level.getPlayerByUUID(owner);
+        if (player instanceof ServerPlayer serverPlayer) {
+            StrikeNetwork.CHANNEL.send(
+                    PacketDistributor.PLAYER.with(() -> serverPlayer),
+                    new StrikeCutscenePacket(target.x, target.z, CUTSCENE_TICKS)
+            );
+        }
+    }
+
+    @SubscribeEvent
+    public void onLevelTick(TickEvent.LevelTickEvent event) {
+        if (event.phase != TickEvent.Phase.END || !(event.level instanceof ServerLevel level)) {
+            return;
+        }
+
+        LevelState state = LEVEL_STATES.get(level);
+        if (state == null) {
+            return;
+        }
+
+        long gameTime = level.getGameTime();
+        Iterator<ScheduledStrike> strikes = state.scheduled.iterator();
+        while (strikes.hasNext()) {
+            ScheduledStrike strike = strikes.next();
+            if (strike.dueAt <= gameTime) {
+                strikes.remove();
+                impact(level, strike);
+                state.jobs.add(createJob(strike));
+            }
+        }
+
+        for (int i = 0; i < CHUNKS_PER_TICK && !state.jobs.isEmpty(); i++) {
+            DestructionJob job = state.jobs.peek();
+            destroyChunk(level, job, job.chunks.remove());
+            if (job.chunks.isEmpty()) {
+                state.jobs.remove();
+                Player owner = level.getPlayerByUUID(job.owner);
+                if (owner != null) {
+                    owner.displayClientMessage(
+                            net.minecraft.network.chat.Component.translatable(
+                                    "message.orbitalstrike.complete"
+                            ),
+                            true
+                    );
+                }
+            }
+        }
+
+        if (state.scheduled.isEmpty() && state.jobs.isEmpty()) {
+            LEVEL_STATES.remove(level);
+        }
+    }
+
+    private static void impact(ServerLevel level, ScheduledStrike strike) {
+        double radius = STRIKE_RADIUS;
+        AABB area = new AABB(
+                strike.x - radius,
+                level.getMinBuildHeight(),
+                strike.z - radius,
+                strike.x + radius + 1.0D,
+                level.getMaxBuildHeight(),
+                strike.z + radius + 1.0D
+        );
+        removeEntities(level, area, strike.x, strike.z);
+        level.playSound(
+                null,
+                BlockPos.containing(strike.x, strike.y, strike.z),
+                net.minecraft.sounds.SoundEvents.LIGHTNING_BOLT_THUNDER,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                8.0F,
+                0.65F
+        );
+    }
+
+    private static DestructionJob createJob(ScheduledStrike strike) {
+        int centerX = (int) Math.floor(strike.x);
+        int centerZ = (int) Math.floor(strike.z);
+        int minChunkX = Math.floorDiv(centerX - STRIKE_RADIUS, 16);
+        int maxChunkX = Math.floorDiv(centerX + STRIKE_RADIUS, 16);
+        int minChunkZ = Math.floorDiv(centerZ - STRIKE_RADIUS, 16);
+        int maxChunkZ = Math.floorDiv(centerZ + STRIKE_RADIUS, 16);
+        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+        List<ChunkPos> chunks = new ArrayList<>();
+
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                int minX = chunkX << 4;
+                int minZ = chunkZ << 4;
+                double nearestX = clamp(strike.x, minX, minX + 15);
+                double nearestZ = clamp(strike.z, minZ, minZ + 15);
+                double dx = nearestX - strike.x;
+                double dz = nearestZ - strike.z;
+                if (dx * dx + dz * dz <= radiusSquared) {
+                    chunks.add(new ChunkPos(chunkX, chunkZ));
+                }
+            }
+        }
+
+        chunks.sort(Comparator.comparingDouble(pos -> {
+            double dx = pos.getMinBlockX() + 8.0D - strike.x;
+            double dz = pos.getMinBlockZ() + 8.0D - strike.z;
+            return dx * dx + dz * dz;
+        }));
+        return new DestructionJob(new ArrayDeque<>(chunks), strike.owner, strike.x, strike.z);
+    }
+
+    private static void destroyChunk(ServerLevel level, DestructionJob job, ChunkPos chunkPos) {
+        level.getChunk(chunkPos.x, chunkPos.z);
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int minY = level.getMinBuildHeight();
+        int maxY = level.getMaxBuildHeight();
+        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+        removeEntities(
+                level,
+                new AABB(minX, minY, minZ, minX + 16.0D, maxY, minZ + 16.0D),
+                job.x,
+                job.z
+        );
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
+        for (int localX = 0; localX < 16; localX++) {
+            int x = minX + localX;
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int z = minZ + localZ;
+                double dx = x + 0.5D - job.x;
+                double dz = z + 0.5D - job.z;
+                if (dx * dx + dz * dz > radiusSquared) {
+                    continue;
+                }
+
+                for (int y = minY; y < maxY; y++) {
+                    pos.set(x, y, z);
+                    if (!level.getBlockState(pos).isAir()) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void removeEntities(ServerLevel level, AABB area, double x, double z) {
+        double radiusSquared = STRIKE_RADIUS * (double) STRIKE_RADIUS;
+        List<Entity> entities = level.getEntities(
+                (Entity) null,
+                area,
+                entity -> horizontalDistanceSquared(entity.position(), x, z) <= radiusSquared
+        );
+        entities.forEach(Entity::kill);
+    }
+
+    private static double horizontalDistanceSquared(Vec3 position, double x, double z) {
+        double dx = position.x - x;
+        double dz = position.z - z;
+        return dx * dx + dz * dz;
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static final class LevelState {
+        private final List<ScheduledStrike> scheduled = new ArrayList<>();
+        private final ArrayDeque<DestructionJob> jobs = new ArrayDeque<>();
+    }
+
+    private static final class ScheduledStrike {
+        private final long dueAt;
+        private final double x;
+        private final double y;
+        private final double z;
+        private final UUID owner;
+
+        private ScheduledStrike(long dueAt, double x, double y, double z, UUID owner) {
+            this.dueAt = dueAt;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.owner = owner;
+        }
+    }
+
+    private static final class DestructionJob {
+        private final ArrayDeque<ChunkPos> chunks;
+        private final UUID owner;
+        private final double x;
+        private final double z;
+
+        private DestructionJob(ArrayDeque<ChunkPos> chunks, UUID owner, double x, double z) {
+            this.chunks = chunks;
+            this.owner = owner;
+            this.x = x;
+            this.z = z;
+        }
+    }
+}
