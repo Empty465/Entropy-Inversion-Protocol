@@ -25,5 +25,12 @@ public final class StrikeNetwork {
                 StrikeCutscenePacket::decode,
                 StrikeCutscenePacket::handle
         );
+        CHANNEL.registerMessage(
+                1,
+                RequestStrikePacket.class,
+                RequestStrikePacket::encode,
+                RequestStrikePacket::decode,
+                RequestStrikePacket::handle
+        );
     }
 }

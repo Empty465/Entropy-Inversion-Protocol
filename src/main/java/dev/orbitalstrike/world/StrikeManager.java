@@ -186,6 +186,8 @@ public final class StrikeManager {
                 (Entity) null,
                 area,
                 entity -> horizontalDistanceSquared(entity.position(), x, z) <= radiusSquared
+                        && !(entity instanceof Player player
+                        && (player.isCreative() || player.isSpectator()))
         );
         entities.forEach(Entity::kill);
     }
