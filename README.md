@@ -1,3 +1,5 @@
+[해당 프로젝트는 AI를 사용하여 제작되고 있습니다]
+
 ## 엔트로피 역전 프로토콜 (Entropy Inversion Protocol)
 
 Minecraft Forge 1.20.1 모드입니다. 엔트로피 역전 요청기는 크리에이티브 모드의
