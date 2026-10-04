@@ -21,7 +21,11 @@ public final class EntropyInversionMod {
             DeferredRegister.create(ForgeRegistries.ITEMS, MOD_ID);
     public static final RegistryObject<Item> ENTROPY_INVERSION_REQUESTOR = ITEMS.register(
             "entropy_inversion_requestor",
-            () -> new EntropyInversionRequestorItem(new Item.Properties().stacksTo(1))
+            () -> new EntropyInversionRequestorItem(
+                    new Item.Properties()
+                            .rarity(EntropyInversionRequestorItem.COSMIC_RARITY)
+                            .stacksTo(1)
+            )
     );
 
     public EntropyInversionMod(FMLJavaModLoadingContext context) {

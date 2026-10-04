@@ -3,9 +3,11 @@ package dev.entropyinversion.world;
 import dev.entropyinversion.network.StrikeCutscenePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -28,8 +30,9 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class StrikeManager {
-    private static final int CUTSCENE_TICKS = 100;
+    private static final int CUTSCENE_TICKS = 200;
     private static final int CHUNKS_PER_TICK = 2;
+    private static final int DESTRUCTION_EFFECT_SAMPLE_SIZE = 4;
     private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
 
     public static void schedule(ServerLevel level, Vec3 target, UUID owner, int radius) {
@@ -181,6 +184,9 @@ public final class StrikeManager {
                 job.owner
         );
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        List<BlockPos> effectPositions = new ArrayList<>(DESTRUCTION_EFFECT_SAMPLE_SIZE);
+        RandomSource random = level.getRandom();
+        int destroyedBlockCount = 0;
 
         for (int localX = 0; localX < 16; localX++) {
             int x = minX + localX;
@@ -196,9 +202,61 @@ public final class StrikeManager {
                     pos.set(x, y, z);
                     if (!level.getBlockState(pos).isAir()) {
                         level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                        destroyedBlockCount++;
+                        if (effectPositions.size() < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
+                            effectPositions.add(pos.immutable());
+                        } else if (random.nextInt(destroyedBlockCount) < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
+                            effectPositions.set(
+                                    random.nextInt(DESTRUCTION_EFFECT_SAMPLE_SIZE),
+                                    pos.immutable()
+                            );
+                        }
                     }
                 }
             }
+        }
+        spawnDestructionEffects(level, effectPositions);
+    }
+
+    private static void spawnDestructionEffects(ServerLevel level, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            double x = pos.getX() + 0.5D;
+            double y = pos.getY() + 0.5D;
+            double z = pos.getZ() + 0.5D;
+            level.sendParticles(ParticleTypes.EXPLOSION, x, y, z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+            level.sendParticles(
+                    ParticleTypes.SOUL_FIRE_FLAME,
+                    x,
+                    y,
+                    z,
+                    12,
+                    0.6D,
+                    0.8D,
+                    0.6D,
+                    0.06D
+            );
+            level.sendParticles(
+                    ParticleTypes.LARGE_SMOKE,
+                    x,
+                    y,
+                    z,
+                    8,
+                    0.8D,
+                    1.0D,
+                    0.8D,
+                    0.025D
+            );
+            level.sendParticles(
+                    ParticleTypes.PORTAL,
+                    x,
+                    y,
+                    z,
+                    10,
+                    0.7D,
+                    0.7D,
+                    0.7D,
+                    0.5D
+            );
         }
     }
 

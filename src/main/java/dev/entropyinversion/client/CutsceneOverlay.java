@@ -26,10 +26,10 @@ import net.minecraftforge.fml.common.Mod;
         bus = Mod.EventBusSubscriber.Bus.FORGE
 )
 public final class CutsceneOverlay {
-    private static final float SPACE_SCENE_END = 0.36F;
-    private static final float IMPACT_SCENE_START = 0.43F;
-    private static final float IMPACT_BEAM_END = 0.82F;
-    private static final int STAR_COUNT = 112;
+    private static final float SPACE_SCENE_END = 0.43F;
+    private static final float IMPACT_SCENE_START = 0.51F;
+    private static final float IMPACT_BEAM_END = 0.72F;
+    private static final int STAR_COUNT = 176;
     private static final int SHOCKWAVE_PARTICLE_INTERVAL = 2;
     private static final int SHOCKWAVE_PARTICLE_SEGMENTS = 48;
     private static final double SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED = 96.0D * 96.0D;
@@ -106,6 +106,7 @@ public final class CutsceneOverlay {
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
+        drawCinematicFrame(event, width, height, progress);
         if (progress < IMPACT_SCENE_START) {
             float sceneAlpha = progress <= SPACE_SCENE_END
                     ? 1.0F
@@ -155,6 +156,8 @@ public final class CutsceneOverlay {
                 targetBlock.getZ() - camera.z
         );
 
+        float beamPulse = 0.94F + 0.06F
+                * (float) Math.sin((minecraft.level.getGameTime() + event.getPartialTick()) * 0.65D);
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
                 minecraft.renderBuffers().bufferSource(),
@@ -165,8 +168,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.025F, 0.08F},
-                0.38F,
-                0.48F
+                0.45F * beamPulse,
+                0.54F * beamPulse
         );
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
@@ -178,8 +181,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.16F, 0.32F},
-                0.2F,
-                0.3F
+                0.23F * beamPulse,
+                0.34F * beamPulse
         );
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
@@ -191,8 +194,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.88F, 0.68F},
-                0.045F,
-                0.09F
+                0.06F * beamPulse,
+                0.12F * beamPulse
         );
         minecraft.renderBuffers().bufferSource().endBatch(
                 RenderType.beaconBeam(BeaconRenderer.BEAM_LOCATION, false)
@@ -373,12 +376,27 @@ public final class CutsceneOverlay {
                 height,
                 (opaqueAlpha << 24) | 0x00030A1C
         );
-        drawStars(event, width, height, sceneAlpha);
+        drawStars(event, width, height, sceneAlpha, progress);
 
         int planetRadius = Math.max(24, Math.min(width / 4, height / 3));
         int planetCenterY = height * 3 / 4;
         drawPlanet(event, centerX, planetCenterY, planetRadius, sceneAlpha);
-
+        drawEllipse(
+                event,
+                centerX,
+                planetCenterY,
+                planetRadius + 35,
+                Math.max(8, planetRadius / 4),
+                ((int) (sceneAlpha * 110.0F) << 24) | 0x00FF5278
+        );
+        drawEllipse(
+                event,
+                centerX,
+                planetCenterY,
+                planetRadius + 52,
+                Math.max(10, planetRadius / 3),
+                ((int) (sceneAlpha * 58.0F) << 24) | 0x0047BFFF
+        );
         drawSceneLabels(
                 event,
                 width,
@@ -394,11 +412,14 @@ public final class CutsceneOverlay {
             RenderGuiOverlayEvent.Post event,
             int width,
             int height,
-            float alpha
+            float alpha,
+            float progress
     ) {
+        int driftX = (int) (progress * width * 0.035F);
+        int driftY = (int) (progress * height * 0.012F);
         for (int i = 0; i < STAR_COUNT; i++) {
-            int x = Math.floorMod(i * 7919 + 37, width);
-            int y = Math.floorMod(i * 3571 + 19, height);
+            int x = Math.floorMod(i * 7919 + 37 + driftX * (1 + i % 3), width);
+            int y = Math.floorMod(i * 3571 + 19 + driftY * (1 + i % 2), height);
             int size = i % 13 == 0 ? 2 : 1;
             int brightness = 150 + Math.floorMod(i * 47, 106);
             int color = (int) (brightness * alpha);
@@ -580,6 +601,45 @@ public final class CutsceneOverlay {
                 centerX,
                 height / 5 + 14,
                 detailColor
+        );
+    }
+
+    private static void drawCinematicFrame(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        int barHeight = Math.max(8, height / 18);
+        event.getGuiGraphics().fill(0, 0, width, barHeight, 0xD9000309);
+        event.getGuiGraphics().fill(0, height - barHeight, width, height, 0xD9000309);
+
+        int meterWidth = Math.max(80, width / 3);
+        int meterLeft = (width - meterWidth) / 2;
+        int meterY = height - barHeight + 4;
+        event.getGuiGraphics().fill(
+                meterLeft,
+                meterY,
+                meterLeft + meterWidth,
+                meterY + 2,
+                0xFF263643
+        );
+        int progressWidth = (int) (meterWidth * Math.max(0.0F, Math.min(1.0F, progress)));
+        if (progressWidth > 0) {
+            event.getGuiGraphics().fill(
+                    meterLeft,
+                    meterY,
+                    meterLeft + progressWidth,
+                    meterY + 2,
+                    progress < IMPACT_SCENE_START ? 0xFF56CFFF : 0xFFFF526C
+            );
+        }
+        event.getGuiGraphics().fill(
+                meterLeft + progressWidth - 1,
+                meterY - 1,
+                meterLeft + progressWidth + 2,
+                meterY + 3,
+                0xFFFFF0D0
         );
     }
 
