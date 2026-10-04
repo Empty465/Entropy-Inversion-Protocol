@@ -44,6 +44,10 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 - Target and radius-boundary particles appear while aiming. Sounds play when targeting starts, the radius changes, the cutscene transitions, and the strike hits.
 - The Requestor cannot be crafted; it is available in Creative mode.
 
+## Future Plans
+
+- Add other attack types for the Requestor, such as instantly eliminating entities within range without destroying blocks, or guiding nearby asteroids to bombard the area.
+
 ---
 
 # 엔트로피 역전 프로토콜
@@ -91,3 +95,7 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 - 요청기는 소모되지 않으며, 타격 요청 후 10초의 재사용 대기시간이 있습니다.
 - 조준 시 목표 지점과 반경 경계에 입자 효과가 표시됩니다. 조준 시작, 반경 변경, 컷씬 전환 및 타격 시 사운드가 재생됩니다.
 - 요청기는 제작할 수 없으며 크리에이티브 모드에서 획득할 수 있습니다.
+
+## 향후 계획
+
+- 요청기로 다른 형태의 공격 추가 (블록 파괴없이 범위 내 생명체만 즉사, 주변 소행성을 유도하여 폭격 등)
