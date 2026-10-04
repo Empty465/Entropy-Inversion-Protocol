@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.entropyinversion.EntropyInversionMod;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.network.LockStrikeTargetPacket;
 import dev.entropyinversion.network.RequestStrikePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.client.Minecraft;
@@ -41,6 +42,7 @@ public final class TargetingMode {
     private static final int PREVIEW_MAX_RADIUS = 42;
     private static boolean active;
     private static boolean leftButtonDown;
+    private static boolean longPressHandled;
     private static int holdTicks;
     private static int strikeRadius = EntropyInversionRequestorItem.DEFAULT_STRIKE_RADIUS;
     private static Vec3 target;
@@ -55,8 +57,10 @@ public final class TargetingMode {
         }
         active = true;
         leftButtonDown = false;
+        longPressHandled = false;
         holdTicks = 0;
-        updateTarget(minecraft.player);
+        target = null;
+        clearServerTarget();
         minecraft.getSoundManager().play(
                 SimpleSoundInstance.forUI(SoundEvents.BEACON_ACTIVATE, 0.65F, 1.25F)
         );
@@ -116,9 +120,14 @@ public final class TargetingMode {
             event.setCanceled(true);
             if (event.getAction() == GLFW.GLFW_PRESS) {
                 leftButtonDown = true;
+                longPressHandled = false;
                 holdTicks = 0;
             } else if (event.getAction() == GLFW.GLFW_RELEASE) {
+                if (leftButtonDown && !longPressHandled) {
+                    updateLockedTarget(Minecraft.getInstance().player);
+                }
                 leftButtonDown = false;
+                longPressHandled = false;
                 holdTicks = 0;
             }
         }
@@ -147,20 +156,19 @@ public final class TargetingMode {
             return;
         }
 
-        updateTarget(player);
         spawnTargetingParticles(minecraft);
-        if (leftButtonDown) {
+        if (leftButtonDown && !longPressHandled) {
             holdTicks++;
             if (holdTicks >= HOLD_TO_CONFIRM_TICKS) {
-                active = false;
-                leftButtonDown = false;
-                holdTicks = 0;
+                longPressHandled = true;
                 if (target == null) {
                     player.displayClientMessage(
                             Component.translatable("message.entropyinversion.no_target"),
                             true
                     );
                 } else if (minecraft.getConnection() != null) {
+                    active = false;
+                    leftButtonDown = false;
                     StrikeNetwork.CHANNEL.sendToServer(new RequestStrikePacket(strikeRadius));
                 }
             }
@@ -257,8 +265,8 @@ public final class TargetingMode {
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
-        int y = height - 82;
-        event.getGuiGraphics().fill(centerX - 115, y - 6, centerX + 115, y + 43, 0xCC081522);
+        int y = height - 96;
+        event.getGuiGraphics().fill(centerX - 145, y - 6, centerX + 145, y + 56, 0xCC081522);
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 Component.translatable("gui.entropyinversion.targeting.title"),
@@ -287,9 +295,16 @@ public final class TargetingMode {
                 y + 25,
                 0xFFFFD27A
         );
+        event.getGuiGraphics().drawCenteredString(
+                minecraft.font,
+                Component.translatable("gui.entropyinversion.targeting.cancel"),
+                centerX,
+                y + 36,
+                0xFFB7C9D8
+        );
 
         int barLeft = centerX - 80;
-        int barTop = y + 39;
+        int barTop = y + 50;
         event.getGuiGraphics().fill(barLeft, barTop, barLeft + 160, barTop + 4, 0xFF26394A);
         int filledWidth = 160 * holdTicks / HOLD_TO_CONFIRM_TICKS;
         if (filledWidth > 0) {
@@ -399,12 +414,26 @@ public final class TargetingMode {
         }
     }
 
-    private static void updateTarget(Player player) {
+    private static void updateLockedTarget(Player player) {
+        if (player == null) {
+            target = null;
+            return;
+        }
         HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, false);
         target = hit instanceof BlockHitResult blockHit
                 && hit.getType() == HitResult.Type.BLOCK
                 ? blockHit.getLocation()
                 : null;
+        StrikeNetwork.CHANNEL.sendToServer(
+                new LockStrikeTargetPacket(
+                        target == null ? null : BlockPos.containing(target)
+                )
+        );
+        if (target != null) {
+            Minecraft.getInstance().getSoundManager().play(
+                    SimpleSoundInstance.forUI(SoundEvents.BEACON_AMBIENT, 0.55F, 1.35F)
+            );
+        }
     }
 
     private static void spawnTargetingParticles(Minecraft minecraft) {
@@ -445,8 +474,17 @@ public final class TargetingMode {
     private static void cancel() {
         active = false;
         leftButtonDown = false;
+        longPressHandled = false;
         holdTicks = 0;
         target = null;
+        clearServerTarget();
+    }
+
+    private static void clearServerTarget() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.getConnection() != null) {
+            StrikeNetwork.CHANNEL.sendToServer(new LockStrikeTargetPacket(null));
+        }
     }
 
     private static void drawRing(

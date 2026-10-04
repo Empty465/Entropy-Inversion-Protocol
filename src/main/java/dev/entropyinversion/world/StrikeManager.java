@@ -1,5 +1,6 @@
 package dev.entropyinversion.world;
 
+import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import dev.entropyinversion.network.StrikeCutscenePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
@@ -14,8 +15,13 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.network.PacketDistributor;
@@ -31,9 +37,37 @@ import java.util.UUID;
 
 public final class StrikeManager {
     private static final int CUTSCENE_TICKS = 200;
-    private static final int CHUNKS_PER_TICK = 2;
+    private static final int CHUNKS_PER_TICK = 4;
     private static final int DESTRUCTION_EFFECT_SAMPLE_SIZE = 4;
     private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
+    private static final Map<UUID, Vec3> LOCKED_TARGETS = new HashMap<>();
+
+    public static boolean lockTarget(ServerPlayer player, BlockPos requestedTarget) {
+        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 0.0F, false);
+        if (!(hit instanceof BlockHitResult blockHit)
+                || hit.getType() != HitResult.Type.BLOCK
+                || !blockHit.getBlockPos().equals(requestedTarget)
+                || !player.serverLevel().hasChunkAt(requestedTarget)) {
+            LOCKED_TARGETS.remove(player.getUUID());
+            return false;
+        }
+
+        LOCKED_TARGETS.put(player.getUUID(), blockHit.getLocation());
+        return true;
+    }
+
+    public static Vec3 consumeLockedTarget(ServerPlayer player) {
+        return LOCKED_TARGETS.remove(player.getUUID());
+    }
+
+    public static void clearLockedTarget(ServerPlayer player) {
+        LOCKED_TARGETS.remove(player.getUUID());
+    }
+
+    @SubscribeEvent
+    public void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
+        LOCKED_TARGETS.remove(event.getEntity().getUUID());
+    }
 
     public static void schedule(ServerLevel level, Vec3 target, UUID owner, int radius) {
         LevelState state = LEVEL_STATES.computeIfAbsent(level, ignored -> new LevelState());
@@ -169,12 +203,25 @@ public final class StrikeManager {
     }
 
     private static void destroyChunk(ServerLevel level, DestructionJob job, ChunkPos chunkPos) {
-        level.getChunk(chunkPos.x, chunkPos.z);
+        LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
         double radiusSquared = job.radius * (double) job.radius;
+        int[] columns = new int[256];
+        int columnCount = 0;
+        for (int localX = 0; localX < 16; localX++) {
+            int x = minX + localX;
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int z = minZ + localZ;
+                double dx = x + 0.5D - job.x;
+                double dz = z + 0.5D - job.z;
+                if (dx * dx + dz * dz <= radiusSquared) {
+                    columns[columnCount++] = (localX << 4) | localZ;
+                }
+            }
+        }
         removeEntities(
                 level,
                 new AABB(minX, minY, minZ, minX + 16.0D, maxY, minZ + 16.0D),
@@ -183,24 +230,33 @@ public final class StrikeManager {
                 job.radius,
                 job.owner
         );
+        if (columnCount == 0) {
+            return;
+        }
+
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         List<BlockPos> effectPositions = new ArrayList<>(DESTRUCTION_EFFECT_SAMPLE_SIZE);
         RandomSource random = level.getRandom();
         int destroyedBlockCount = 0;
+        LevelChunkSection[] sections = chunk.getSections();
 
-        for (int localX = 0; localX < 16; localX++) {
-            int x = minX + localX;
-            for (int localZ = 0; localZ < 16; localZ++) {
-                int z = minZ + localZ;
-                double dx = x + 0.5D - job.x;
-                double dz = z + 0.5D - job.z;
-                if (dx * dx + dz * dz > radiusSquared) {
-                    continue;
-                }
+        for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+            LevelChunkSection section = sections[sectionIndex];
+            if (section.hasOnlyAir()) {
+                continue;
+            }
 
-                for (int y = minY; y < maxY; y++) {
-                    pos.set(x, y, z);
-                    if (!level.getBlockState(pos).isAir()) {
+            int sectionMinY = level.getMinBuildHeight() + sectionIndex * 16;
+            int firstLocalY = Math.max(0, minY - sectionMinY);
+            int lastLocalY = Math.min(16, maxY - sectionMinY);
+            for (int localY = firstLocalY; localY < lastLocalY; localY++) {
+                int y = sectionMinY + localY;
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int column = columns[columnIndex];
+                    int localX = column >> 4;
+                    int localZ = column & 15;
+                    pos.set(minX + localX, y, minZ + localZ);
+                    if (!section.getBlockState(localX, localY, localZ).isAir()) {
                         level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
                         destroyedBlockCount++;
                         if (effectPositions.size() < DESTRUCTION_EFFECT_SAMPLE_SIZE) {

@@ -30,6 +30,7 @@ public final class CutsceneOverlay {
     private static final float IMPACT_SCENE_START = 0.51F;
     private static final float IMPACT_BEAM_END = 0.72F;
     private static final int STAR_COUNT = 176;
+    private static final int SCANLINE_COUNT = 42;
     private static final int SHOCKWAVE_PARTICLE_INTERVAL = 2;
     private static final int SHOCKWAVE_PARTICLE_SEGMENTS = 48;
     private static final double SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED = 96.0D * 96.0D;
@@ -79,10 +80,28 @@ public final class CutsceneOverlay {
 
             float progress = (minecraft.level.getGameTime() - startedAt) / (float) duration;
             spawnShockwaveParticles(minecraft, progress);
-            if (progress >= IMPACT_SCENE_START && soundStage == 0) {
+            if (progress >= 0.18F && soundStage == 0) {
                 soundStage = 1;
                 minecraft.getSoundManager().play(
+                        SimpleSoundInstance.forUI(SoundEvents.BEACON_AMBIENT, 0.5F, 0.7F)
+                );
+            }
+            if (progress >= 0.34F && soundStage == 1) {
+                soundStage = 2;
+                minecraft.getSoundManager().play(
+                        SimpleSoundInstance.forUI(SoundEvents.BEACON_ACTIVATE, 0.75F, 0.9F)
+                );
+            }
+            if (progress >= IMPACT_SCENE_START && soundStage == 2) {
+                soundStage = 3;
+                minecraft.getSoundManager().play(
                         SimpleSoundInstance.forUI(SoundEvents.ENDERMAN_TELEPORT, 0.7F, 0.8F)
+                );
+            }
+            if (progress >= IMPACT_BEAM_END && soundStage == 3) {
+                soundStage = 4;
+                minecraft.getSoundManager().play(
+                        SimpleSoundInstance.forUI(SoundEvents.GENERIC_EXPLODE, 0.85F, 0.65F)
                 );
             }
         }
@@ -106,17 +125,20 @@ public final class CutsceneOverlay {
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
-        drawCinematicFrame(event, width, height, progress);
+        int centerY = height / 2;
         if (progress < IMPACT_SCENE_START) {
             float sceneAlpha = progress <= SPACE_SCENE_END
                     ? 1.0F
                     : 1.0F - (progress - SPACE_SCENE_END)
                             / (IMPACT_SCENE_START - SPACE_SCENE_END);
             drawSpaceScene(event, width, height, centerX, progress, sceneAlpha);
-            return;
+        } else {
+            drawImpactScene(event, width, height, centerX, progress);
         }
-
-        drawImpactScene(event, width, height, centerX, progress);
+        drawCinematicFrame(event, width, height, progress);
+        drawTargetReticle(event, width, height, progress);
+        drawCountdown(event, centerX, centerY, progress);
+        drawTransitionFlash(event, width, height, progress);
     }
 
     @SubscribeEvent
@@ -397,14 +419,92 @@ public final class CutsceneOverlay {
                 Math.max(10, planetRadius / 3),
                 ((int) (sceneAlpha * 58.0F) << 24) | 0x0047BFFF
         );
+        drawScanLines(event, width, height, sceneAlpha);
+        drawCosmicVortex(event, centerX, planetCenterY, planetRadius, progress, sceneAlpha);
         drawSceneLabels(
                 event,
                 width,
                 height,
                 sceneAlpha,
-                progress < SPACE_SCENE_END
-                        ? "gui.entropyinversion.cutscene.space"
-                        : "gui.entropyinversion.cutscene.transition"
+                getStageKey(progress)
+        );
+    }
+
+    private static String getStageKey(float progress) {
+        if (progress < 0.18F) {
+            return "gui.entropyinversion.cutscene.space";
+        }
+        if (progress < 0.34F) {
+            return "gui.entropyinversion.cutscene.charge";
+        }
+        if (progress < IMPACT_SCENE_START) {
+            return "gui.entropyinversion.cutscene.lock";
+        }
+        if (progress < IMPACT_BEAM_END) {
+            return "gui.entropyinversion.cutscene.impact";
+        }
+        return "gui.entropyinversion.cutscene.detonation";
+    }
+
+    private static void drawScanLines(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float alpha
+    ) {
+        int lineAlpha = (int) (alpha * 20.0F);
+        for (int i = 0; i < SCANLINE_COUNT; i++) {
+            int y = i * height / SCANLINE_COUNT;
+            event.getGuiGraphics().fill(
+                    0,
+                    y,
+                    width,
+                    y + 1,
+                    (lineAlpha << 24) | 0x0039BDEB
+            );
+        }
+    }
+
+    private static void drawCosmicVortex(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            int planetRadius,
+            float progress,
+            float alpha
+    ) {
+        for (int i = 0; i < 5; i++) {
+            double phase = progress * (Math.PI * 5.0D) + i * Math.PI * 0.4D;
+            int shiftX = (int) (Math.cos(phase) * 13.0D);
+            int shiftY = (int) (Math.sin(phase) * 7.0D);
+            int orbitX = planetRadius + 25 + i * 9;
+            int orbitY = Math.max(8, planetRadius / 5 + i * 4);
+            int colorAlpha = (int) (alpha * (92.0F - i * 10.0F));
+            drawEllipse(
+                    event,
+                    centerX + shiftX,
+                    centerY + shiftY,
+                    orbitX,
+                    orbitY,
+                    (colorAlpha << 24) | (i % 2 == 0 ? 0x00FF4E78 : 0x0047CFFF)
+            );
+        }
+
+        int flareSize = 3 + (int) ((Math.sin(progress * Math.PI * 16.0D) + 1.0D) * 3.0D);
+        int flareAlpha = (int) (alpha * 210.0F);
+        event.getGuiGraphics().fill(
+                centerX - flareSize,
+                centerY - flareSize,
+                centerX + flareSize + 1,
+                centerY + flareSize + 1,
+                (flareAlpha << 24) | 0x00FFF0CB
+        );
+        event.getGuiGraphics().fill(
+                centerX - flareSize * 4,
+                centerY - 1,
+                centerX + flareSize * 4 + 1,
+                centerY + 2,
+                ((flareAlpha / 2) << 24) | 0x00FF738D
         );
     }
 
@@ -425,6 +525,16 @@ public final class CutsceneOverlay {
             int color = (int) (brightness * alpha);
             int argb = (color << 24) | (0x00B9DFFF + (i % 3) * 0x000A0710);
             event.getGuiGraphics().fill(x, y, x + size, y + size, argb);
+            if (progress > 0.2F && i % 3 == 0) {
+                int trailLength = 4 + (int) (progress * 42.0F * (1 + i % 3));
+                event.getGuiGraphics().fill(
+                        x - trailLength,
+                        y,
+                        x,
+                        y + 1,
+                        ((color / 2) << 24) | 0x004FCBFF
+                );
+            }
             if (size == 2) {
                 event.getGuiGraphics().fill(x - 2, y, x + 4, y + 1, (color / 2 << 24) | 0x00C8E8FF);
                 event.getGuiGraphics().fill(x, y - 2, x + 1, y + 4, (color / 2 << 24) | 0x00C8E8FF);
@@ -571,6 +681,153 @@ public final class CutsceneOverlay {
         );
     }
 
+    private static void drawTargetReticle(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        float lockProgress = Math.max(
+                0.0F,
+                Math.min(1.0F, (progress - 0.2F) / (IMPACT_SCENE_START - 0.2F))
+        );
+        int centerX = width / 2;
+        int centerY = height / 2;
+        int halfSize = (int) (52.0F - 34.0F * lockProgress);
+        int color = progress < IMPACT_SCENE_START ? 0xFF60E5FF : 0xFFFF667A;
+        drawReticleCorner(event, centerX - halfSize, centerY - halfSize, 7, 5, color, -1, -1);
+        drawReticleCorner(event, centerX + halfSize, centerY - halfSize, 7, 5, color, 1, -1);
+        drawReticleCorner(event, centerX - halfSize, centerY + halfSize, 7, 5, color, -1, 1);
+        drawReticleCorner(event, centerX + halfSize, centerY + halfSize, 7, 5, color, 1, 1);
+
+        int markerSize = 3 + (int) (lockProgress * 3.0F);
+        event.getGuiGraphics().fill(
+                centerX - markerSize,
+                centerY - markerSize,
+                centerX + markerSize + 1,
+                centerY + markerSize + 1,
+                0xD9FF546B
+        );
+        event.getGuiGraphics().fill(
+                centerX - 1,
+                centerY - halfSize - 13,
+                centerX + 2,
+                centerY - halfSize - 5,
+                color
+        );
+        event.getGuiGraphics().fill(
+                centerX - 1,
+                centerY + halfSize + 5,
+                centerX + 2,
+                centerY + halfSize + 13,
+                color
+        );
+        event.getGuiGraphics().fill(
+                centerX - halfSize - 13,
+                centerY - 1,
+                centerX - halfSize - 5,
+                centerY + 2,
+                color
+        );
+        event.getGuiGraphics().fill(
+                centerX + halfSize + 5,
+                centerY - 1,
+                centerX + halfSize + 13,
+                centerY + 2,
+                color
+        );
+    }
+
+    private static void drawReticleCorner(
+            RenderGuiOverlayEvent.Post event,
+            int x,
+            int y,
+            int arm,
+            int gap,
+            int color,
+            int directionX,
+            int directionY
+    ) {
+        int horizontalStart = directionX < 0 ? x - gap - arm : x + gap;
+        int horizontalEnd = directionX < 0 ? x - gap : x + gap + arm;
+        int verticalStart = directionY < 0 ? y - gap - arm : y + gap;
+        int verticalEnd = directionY < 0 ? y - gap : y + gap + arm;
+        event.getGuiGraphics().fill(horizontalStart, y - 1, horizontalEnd, y + 2, color);
+        event.getGuiGraphics().fill(x - 1, verticalStart, x + 2, verticalEnd, color);
+    }
+
+    private static void drawCountdown(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            float progress
+    ) {
+        if (progress >= IMPACT_BEAM_END) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        int seconds = Math.max(0, (int) Math.ceil((1.0F - progress) * duration / 20.0F));
+        String countdown = String.format(java.util.Locale.ROOT, "00:%02d", seconds);
+        int color = progress < IMPACT_SCENE_START ? 0xFFF2FBFF : 0xFFFFE7D4;
+        if (progress < IMPACT_SCENE_START) {
+            drawScaledCenteredString(
+                    event,
+                    minecraft,
+                    countdown,
+                    centerX,
+                    centerY + 42,
+                    3.2F,
+                    color
+            );
+        } else {
+            event.getGuiGraphics().fill(centerX - 39, 32, centerX + 39, 64, 0xB40A111B);
+            drawScaledCenteredString(event, minecraft, countdown, centerX, 42, 1.7F, color);
+        }
+    }
+
+    private static void drawScaledCenteredString(
+            RenderGuiOverlayEvent.Post event,
+            Minecraft minecraft,
+            String text,
+            int centerX,
+            int y,
+            float scale,
+            int color
+    ) {
+        event.getGuiGraphics().pose().pushPose();
+        event.getGuiGraphics().pose().translate(centerX, y, 0.0F);
+        event.getGuiGraphics().pose().scale(scale, scale, 1.0F);
+        event.getGuiGraphics().drawCenteredString(minecraft.font, text, 0, 0, color);
+        event.getGuiGraphics().pose().popPose();
+    }
+
+    private static void drawTransitionFlash(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        float lockFlash = Math.max(
+                0.0F,
+                1.0F - Math.abs(progress - IMPACT_SCENE_START) / 0.018F
+        );
+        float impactFlash = Math.max(
+                0.0F,
+                1.0F - Math.abs(progress - IMPACT_BEAM_END) / 0.012F
+        );
+        int alpha = (int) Math.max(lockFlash * 74.0F, impactFlash * 112.0F);
+        if (alpha > 0) {
+            event.getGuiGraphics().fill(
+                    0,
+                    0,
+                    width,
+                    height,
+                    (alpha << 24) | 0x00FFD9C4
+            );
+        }
+    }
+
     private static void drawSceneLabels(
             RenderGuiOverlayEvent.Post event,
             int width,
@@ -640,6 +897,28 @@ public final class CutsceneOverlay {
                 meterLeft + progressWidth + 2,
                 meterY + 3,
                 0xFFFFF0D0
+        );
+        for (int i = 1; i < 10; i++) {
+            int tickX = meterLeft + meterWidth * i / 10;
+            event.getGuiGraphics().fill(tickX, meterY - 1, tickX + 1, meterY + 3, 0xAA9ABAC8);
+        }
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                Component.literal("E.I.P. // REALITY BREACH PROTOCOL"),
+                12,
+                barHeight / 2 - 4,
+                0xFF9CCBE0,
+                false
+        );
+        String phaseCode = progress < IMPACT_SCENE_START ? "ORBITAL LOCK" : "IMPACT SEQUENCE";
+        int codeWidth = Minecraft.getInstance().font.width(phaseCode);
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                phaseCode,
+                width - codeWidth - 12,
+                barHeight / 2 - 4,
+                progress < IMPACT_SCENE_START ? 0xFF63D9FF : 0xFFFF6579,
+                false
         );
     }
 

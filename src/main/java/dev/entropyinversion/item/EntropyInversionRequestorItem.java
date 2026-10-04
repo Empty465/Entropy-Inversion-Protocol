@@ -25,7 +25,7 @@ public final class EntropyInversionRequestorItem extends Item {
     public static final double TARGETING_RANGE = 512.0D;
     public static final int MIN_STRIKE_RADIUS = 1;
     public static final int MAX_STRIKE_RADIUS = 200;
-    public static final int DEFAULT_STRIKE_RADIUS = 200;
+    public static final int DEFAULT_STRIKE_RADIUS = 10;
 
     public EntropyInversionRequestorItem(Properties properties) {
         super(properties);

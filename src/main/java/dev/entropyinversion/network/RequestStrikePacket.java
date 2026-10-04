@@ -6,8 +6,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
@@ -61,10 +60,8 @@ public final class RequestStrikePacket {
                 return;
             }
 
-            HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 0.0F, false);
-            if (!(hit instanceof BlockHitResult blockHit)
-                    || hit.getType() != HitResult.Type.BLOCK
-                    || !player.serverLevel().hasChunkAt(blockHit.getBlockPos())) {
+            Vec3 target = StrikeManager.consumeLockedTarget(player);
+            if (target == null) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.translatable(
                                 "message.entropyinversion.no_target"
@@ -73,10 +70,20 @@ public final class RequestStrikePacket {
                 );
                 return;
             }
+            net.minecraft.core.BlockPos targetBlock = net.minecraft.core.BlockPos.containing(target);
+            if (!player.serverLevel().hasChunkAt(targetBlock)) {
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.translatable(
+                                "message.entropyinversion.unloaded_target"
+                        ),
+                        true
+                );
+                return;
+            }
 
             StrikeManager.schedule(
                     player.serverLevel(),
-                    blockHit.getLocation(),
+                    target,
                     player.getUUID(),
                     packet.radius
             );
@@ -87,9 +94,9 @@ public final class RequestStrikePacket {
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.translatable(
                             "message.entropyinversion.requested",
-                            blockHit.getBlockPos().getX(),
-                            blockHit.getBlockPos().getY(),
-                            blockHit.getBlockPos().getZ()
+                            targetBlock.getX(),
+                            targetBlock.getY(),
+                            targetBlock.getZ()
                     ),
                     true
             );

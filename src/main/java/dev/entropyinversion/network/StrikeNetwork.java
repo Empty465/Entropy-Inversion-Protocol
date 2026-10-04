@@ -32,5 +32,12 @@ public final class StrikeNetwork {
                 RequestStrikePacket::decode,
                 RequestStrikePacket::handle
         );
+        CHANNEL.registerMessage(
+                2,
+                LockStrikeTargetPacket.class,
+                LockStrikeTargetPacket::encode,
+                LockStrikeTargetPacket::decode,
+                LockStrikeTargetPacket::handle
+        );
     }
 }
