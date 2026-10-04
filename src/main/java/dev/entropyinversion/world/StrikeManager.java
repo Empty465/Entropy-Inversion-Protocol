@@ -4,17 +4,20 @@ import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import dev.entropyinversion.network.StrikeCutscenePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
@@ -42,12 +45,41 @@ public final class StrikeManager {
     private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
     private static final Map<UUID, Vec3> LOCKED_TARGETS = new HashMap<>();
 
-    public static boolean lockTarget(ServerPlayer player, BlockPos requestedTarget) {
-        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 0.0F, false);
+    public static boolean lockTarget(
+            ServerPlayer player,
+            BlockPos requestedTarget,
+            Vec3 requestedHitLocation
+    ) {
+        if (requestedHitLocation == null) {
+            LOCKED_TARGETS.remove(player.getUUID());
+            return false;
+        }
+
+        ServerLevel level = player.serverLevel();
+        Vec3 eyePosition = player.getEyePosition();
+        Vec3 ray = requestedHitLocation.subtract(eyePosition);
+        double reachSquared = EntropyInversionRequestorItem.TARGETING_RANGE
+                * EntropyInversionRequestorItem.TARGETING_RANGE;
+        if (requestedTarget.getY() < level.getMinBuildHeight()
+                || requestedTarget.getY() >= level.getMaxBuildHeight()
+                || ray.lengthSqr() > reachSquared
+                || ray.lengthSqr() < 0.0001D) {
+            LOCKED_TARGETS.remove(player.getUUID());
+            return false;
+        }
+
+        level.getChunk(requestedTarget.getX() >> 4, requestedTarget.getZ() >> 4);
+        Vec3 rayEnd = requestedHitLocation.add(ray.normalize().scale(0.05D));
+        HitResult hit = level.clip(new ClipContext(
+                eyePosition,
+                rayEnd,
+                ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE,
+                player
+        ));
         if (!(hit instanceof BlockHitResult blockHit)
                 || hit.getType() != HitResult.Type.BLOCK
-                || !blockHit.getBlockPos().equals(requestedTarget)
-                || !player.serverLevel().hasChunkAt(requestedTarget)) {
+                || !blockHit.getBlockPos().equals(requestedTarget)) {
             LOCKED_TARGETS.remove(player.getUUID());
             return false;
         }
@@ -167,11 +199,13 @@ public final class StrikeManager {
     private static DestructionJob createJob(ScheduledStrike strike) {
         int centerX = (int) Math.floor(strike.x);
         int centerZ = (int) Math.floor(strike.z);
-        int minChunkX = Math.floorDiv(centerX - strike.radius, 16);
-        int maxChunkX = Math.floorDiv(centerX + strike.radius, 16);
-        int minChunkZ = Math.floorDiv(centerZ - strike.radius, 16);
-        int maxChunkZ = Math.floorDiv(centerZ + strike.radius, 16);
-        double radiusSquared = strike.radius * (double) strike.radius;
+        double rimCoverageRadius = strike.radius + scorchedRimWidth(strike.radius);
+        double radiusSquared = rimCoverageRadius * rimCoverageRadius;
+        int rimChunkRadius = strike.radius + scorchedRimWidth(strike.radius);
+        int minChunkX = Math.floorDiv(centerX - rimChunkRadius, 16);
+        int maxChunkX = Math.floorDiv(centerX + rimChunkRadius, 16);
+        int minChunkZ = Math.floorDiv(centerZ - rimChunkRadius, 16);
+        int maxChunkZ = Math.floorDiv(centerZ + rimChunkRadius, 16);
         List<ChunkPos> chunks = new ArrayList<>();
 
         for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
@@ -208,6 +242,7 @@ public final class StrikeManager {
         int minZ = chunkPos.getMinBlockZ();
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
+        RandomSource random = level.getRandom();
         double radiusSquared = job.radius * (double) job.radius;
         int[] columns = new int[256];
         int columnCount = 0;
@@ -231,12 +266,12 @@ public final class StrikeManager {
                 job.owner
         );
         if (columnCount == 0) {
+            spawnScorchedRim(level, job, chunkPos, random);
             return;
         }
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         List<BlockPos> effectPositions = new ArrayList<>(DESTRUCTION_EFFECT_SAMPLE_SIZE);
-        RandomSource random = level.getRandom();
         int destroyedBlockCount = 0;
         LevelChunkSection[] sections = chunk.getSections();
 
@@ -272,6 +307,56 @@ public final class StrikeManager {
             }
         }
         spawnDestructionEffects(level, effectPositions);
+        spawnScorchedRim(level, job, chunkPos, random);
+    }
+
+    private static int scorchedRimWidth(int strikeRadius) {
+        return Math.max(2, Math.min(24, (int) Math.ceil(strikeRadius * 0.12D)));
+    }
+
+    private static void spawnScorchedRim(
+            ServerLevel level,
+            DestructionJob job,
+            ChunkPos chunkPos,
+            RandomSource random
+    ) {
+        double innerRadiusSquared = job.radius * (double) job.radius;
+        double outerRadius = job.radius + scorchedRimWidth(job.radius);
+        double outerRadiusSquared = outerRadius * outerRadius;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        for (int localX = 0; localX < 16; localX++) {
+            int x = minX + localX;
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int z = minZ + localZ;
+                double dx = x + 0.5D - job.x;
+                double dz = z + 0.5D - job.z;
+                double distanceSquared = dx * dx + dz * dz;
+                if (distanceSquared <= innerRadiusSquared || distanceSquared > outerRadiusSquared
+                        || random.nextInt(5) == 0) {
+                    continue;
+                }
+
+                int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                if (surfaceY < level.getMinBuildHeight()) {
+                    continue;
+                }
+                pos.set(x, surfaceY, z);
+
+                var surface = level.getBlockState(pos);
+                if (!surface.isFaceSturdy(level, pos, Direction.UP)
+                        || !surface.getFluidState().isEmpty()
+                        || surface.getDestroySpeed(level, pos) < 0.0F) {
+                    continue;
+                }
+
+                var scarBlock = random.nextInt(4) == 0
+                        ? Blocks.MAGMA_BLOCK
+                        : random.nextBoolean() ? Blocks.BLACKSTONE : Blocks.BASALT;
+                level.setBlock(pos, scarBlock.defaultBlockState(), 3);
+            }
+        }
     }
 
     private static void spawnDestructionEffects(ServerLevel level, List<BlockPos> positions) {

@@ -420,14 +420,15 @@ public final class TargetingMode {
             return;
         }
         HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, false);
-        target = hit instanceof BlockHitResult blockHit
+        BlockHitResult blockHit = hit instanceof BlockHitResult block
                 && hit.getType() == HitResult.Type.BLOCK
+                ? block
+                : null;
+        target = blockHit != null
                 ? blockHit.getLocation()
                 : null;
         StrikeNetwork.CHANNEL.sendToServer(
-                new LockStrikeTargetPacket(
-                        target == null ? null : BlockPos.containing(target)
-                )
+                new LockStrikeTargetPacket(blockHit == null ? null : blockHit.getBlockPos(), target)
         );
         if (target != null) {
             Minecraft.getInstance().getSoundManager().play(
@@ -483,7 +484,7 @@ public final class TargetingMode {
     private static void clearServerTarget() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.getConnection() != null) {
-            StrikeNetwork.CHANNEL.sendToServer(new LockStrikeTargetPacket(null));
+            StrikeNetwork.CHANNEL.sendToServer(new LockStrikeTargetPacket(null, null));
         }
     }
 

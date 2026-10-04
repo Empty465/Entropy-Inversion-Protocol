@@ -1,7 +1,9 @@
 package dev.entropyinversion.client;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.math.Axis;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
@@ -10,6 +12,7 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
@@ -26,19 +29,26 @@ import net.minecraftforge.fml.common.Mod;
         bus = Mod.EventBusSubscriber.Bus.FORGE
 )
 public final class CutsceneOverlay {
+    private static final ResourceLocation ORBITAL_ARRAY_TEXTURE =
+            new ResourceLocation("entropyinversion", "textures/gui/orbital_array.png");
     private static final float SPACE_SCENE_END = 0.43F;
+    private static final float CHARGE_SCENE_START = 0.32F;
+    private static final float LOCK_SCENE_START = 0.34F;
     private static final float IMPACT_SCENE_START = 0.51F;
     private static final float IMPACT_BEAM_END = 0.72F;
     private static final int STAR_COUNT = 176;
-    private static final int SCANLINE_COUNT = 42;
+    private static final int SCANLINE_COUNT = 30;
+    private static final int CHARGE_PARTICLE_INTERVAL = 2;
     private static final int SHOCKWAVE_PARTICLE_INTERVAL = 2;
     private static final int SHOCKWAVE_PARTICLE_SEGMENTS = 48;
     private static final double SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED = 96.0D * 96.0D;
     private static long startedAt;
+    private static long lastChargeParticleTick = Long.MIN_VALUE;
     private static long lastShockwaveParticleTick = Long.MIN_VALUE;
     private static int duration;
     private static int strikeRadius;
     private static int soundStage;
+    private static boolean impactBurstSpawned;
     private static double targetX;
     private static double targetY;
     private static double targetZ;
@@ -61,8 +71,10 @@ public final class CutsceneOverlay {
                 Math.min(EntropyInversionRequestorItem.MAX_STRIKE_RADIUS, radius)
         );
         startedAt = minecraft.level.getGameTime();
+        lastChargeParticleTick = Long.MIN_VALUE;
         lastShockwaveParticleTick = Long.MIN_VALUE;
         soundStage = 0;
+        impactBurstSpawned = false;
         active = true;
         minecraft.getSoundManager().play(
                 SimpleSoundInstance.forUI(SoundEvents.END_PORTAL_SPAWN, 0.35F, 0.75F)
@@ -79,6 +91,7 @@ public final class CutsceneOverlay {
             }
 
             float progress = (minecraft.level.getGameTime() - startedAt) / (float) duration;
+            spawnChargeParticles(minecraft, progress);
             spawnShockwaveParticles(minecraft, progress);
             if (progress >= 0.18F && soundStage == 0) {
                 soundStage = 1;
@@ -104,6 +117,35 @@ public final class CutsceneOverlay {
                         SimpleSoundInstance.forUI(SoundEvents.GENERIC_EXPLODE, 0.85F, 0.65F)
                 );
             }
+        }
+    }
+
+    private static void drawMeteors(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress,
+            float alpha
+    ) {
+        int meteorCount = progress < CHARGE_SCENE_START ? 4 : 10;
+        for (int i = 0; i < meteorCount; i++) {
+            int cycle = Math.floorMod((int) (progress * 900.0F) + i * 137, 900);
+            float travel = cycle / 900.0F;
+            int startX = Math.floorMod(i * 271 + 31, Math.max(1, width));
+            int startY = Math.floorMod(i * 149 + 17, Math.max(1, height / 2));
+            int x = startX + (int) (travel * width * 0.72F);
+            int y = startY + (int) (travel * height * 0.48F);
+            int length = 8 + (i % 4) * 5;
+            int meteorAlpha = (int) (alpha * (95.0F + (i % 3) * 45.0F));
+            int color = (meteorAlpha << 24) | (i % 3 == 0 ? 0x00FF8870 : 0x0066DFFF);
+            event.getGuiGraphics().fill(x - length, y - length / 2, x, y, color);
+            event.getGuiGraphics().fill(
+                    x - 2,
+                    y - 1,
+                    x + 2,
+                    y + 2,
+                    ((meteorAlpha + 35) << 24) | 0x00F5FFFF
+            );
         }
     }
 
@@ -136,7 +178,9 @@ public final class CutsceneOverlay {
             drawImpactScene(event, width, height, centerX, progress);
         }
         drawCinematicFrame(event, width, height, progress);
-        drawTargetReticle(event, width, height, progress);
+        if (progress >= LOCK_SCENE_START) {
+            drawTargetReticle(event, width, height, progress);
+        }
         drawCountdown(event, centerX, centerY, progress);
         drawTransitionFlash(event, width, height, progress);
     }
@@ -156,7 +200,7 @@ public final class CutsceneOverlay {
         float progress = (float) (
                 (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
         );
-        if (progress < IMPACT_SCENE_START) {
+        if (progress < CHARGE_SCENE_START) {
             return;
         }
 
@@ -178,8 +222,12 @@ public final class CutsceneOverlay {
                 targetBlock.getZ() - camera.z
         );
 
-        float beamPulse = 0.94F + 0.06F
-                * (float) Math.sin((minecraft.level.getGameTime() + event.getPartialTick()) * 0.65D);
+        float beamCharge = clamp01(
+                (progress - CHARGE_SCENE_START) / (IMPACT_BEAM_END - CHARGE_SCENE_START)
+        );
+        float beamPulse = (0.28F + beamCharge * 0.72F)
+                * (0.88F + 0.12F
+                * (float) Math.sin((minecraft.level.getGameTime() + event.getPartialTick()) * 0.65D));
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
                 minecraft.renderBuffers().bufferSource(),
@@ -190,8 +238,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.025F, 0.08F},
-                0.45F * beamPulse,
-                0.54F * beamPulse
+                0.62F * beamPulse,
+                0.82F * beamPulse
         );
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
@@ -203,8 +251,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.16F, 0.32F},
-                0.23F * beamPulse,
-                0.34F * beamPulse
+                0.32F * beamPulse,
+                0.62F * beamPulse
         );
         BeaconRenderer.renderBeaconBeam(
                 poseStack,
@@ -216,8 +264,8 @@ public final class CutsceneOverlay {
                 0,
                 beamHeight,
                 new float[]{1.0F, 0.88F, 0.68F},
-                0.06F * beamPulse,
-                0.12F * beamPulse
+                0.1F * beamPulse,
+                0.22F * beamPulse
         );
         minecraft.renderBuffers().bufferSource().endBatch(
                 RenderType.beaconBeam(BeaconRenderer.BEAM_LOCATION, false)
@@ -225,6 +273,29 @@ public final class CutsceneOverlay {
         minecraft.renderBuffers().bufferSource().endBatch(
                 RenderType.beaconBeam(BeaconRenderer.BEAM_LOCATION, true)
         );
+
+        if (progress >= IMPACT_SCENE_START && progress < IMPACT_BEAM_END) {
+            drawImpactCore(
+                    minecraft,
+                    poseStack,
+                    targetX - targetBlock.getX(),
+                    targetY - targetBlock.getY(),
+                    targetZ - targetBlock.getZ(),
+                    progress
+            );
+        }
+
+        if (progress >= CHARGE_SCENE_START && progress < IMPACT_BEAM_END) {
+            drawChargeLattice(
+                    minecraft,
+                    poseStack,
+                    targetX - targetBlock.getX(),
+                    targetY - targetBlock.getY(),
+                    targetZ - targetBlock.getZ(),
+                    progress,
+                    beamCharge
+            );
+        }
 
         if (progress >= IMPACT_BEAM_END) {
             float shockwaveProgress = Math.min(
@@ -295,12 +366,271 @@ public final class CutsceneOverlay {
                     shockwaveRadius,
                     alpha
             );
+            drawWorldRing(lines, poseStack, localX, localZ, localY + 0.08D,
+                    shockwaveRadius * 0.76D, 1.0F, 0.18F, 0.12F, alpha * 0.58F);
+            drawWorldRing(lines, poseStack, localX, localZ, localY + 0.12D,
+                    shockwaveRadius * 0.48D, 1.0F, 0.48F, 0.12F, alpha * 0.32F);
+            drawShockwaveCrown(lines, poseStack, localX, localZ, localY, shockwaveRadius, alpha);
+            drawImpactLightning(
+                    lines,
+                    poseStack,
+                    localX,
+                    localY + 0.9D,
+                    localZ,
+                    progress,
+                    minecraft.level.getGameTime() + event.getPartialTick()
+            );
             minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
         }
         poseStack.popPose();
     }
 
+    private static void drawImpactLightning(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double baseY,
+            double centerZ,
+            float progress,
+            double gameTime
+    ) {
+        double elapsedTicks = (progress - IMPACT_BEAM_END) * duration;
+        if (elapsedTicks < 0.0D || elapsedTicks >= 24.0D) {
+            return;
+        }
+
+        int strikeIndex = (int) (elapsedTicks / 6.0D);
+        double flashProgress = elapsedTicks - strikeIndex * 6.0D;
+        if (flashProgress >= 2.4D) {
+            return;
+        }
+
+        float flicker = (float) (0.72D + 0.28D * Math.sin(gameTime * 2.7D + strikeIndex * 1.9D));
+        double height = 11.0D + (strikeIndex % 3) * 4.0D;
+        double spread = Math.min(12.0D, Math.max(2.5D, strikeRadius * 0.08D));
+        int boltCount = strikeRadius >= 40 ? 3 : 2;
+        for (int bolt = 0; bolt < boltCount; bolt++) {
+            double seed = strikeIndex * 17.0D + bolt * 31.0D;
+            double startX = Math.sin(seed * 1.31D) * spread;
+            double startZ = Math.cos(seed * 0.91D) * spread;
+            double endX = Math.sin(seed * 0.73D) * spread * 0.2D;
+            double endZ = Math.cos(seed * 1.17D) * spread * 0.2D;
+            drawLightningBolt(
+                    lines,
+                    poseStack,
+                    centerX + startX,
+                    baseY,
+                    centerZ + startZ,
+                    centerX + endX,
+                    centerZ + endZ,
+                    height,
+                    seed,
+                    flicker
+            );
+
+            if (bolt == 0) {
+                double branchX = centerX + startX * 0.35D + spread * 0.55D;
+                double branchZ = centerZ + startZ * 0.35D - spread * 0.35D;
+                drawLightningBolt(
+                        lines,
+                        poseStack,
+                        branchX,
+                        baseY,
+                        branchZ,
+                        centerX + endX,
+                        centerZ + endZ,
+                        height * 0.52D,
+                        seed + 8.0D,
+                        flicker * 0.72F
+                );
+            }
+        }
+    }
+
+    private static void drawLightningBolt(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double startX,
+            double baseY,
+            double startZ,
+            double endX,
+            double endZ,
+            double height,
+            double seed,
+            float alpha
+    ) {
+        int segments = 8;
+        double previousX = startX;
+        double previousY = baseY + height;
+        double previousZ = startZ;
+        for (int segment = 1; segment <= segments; segment++) {
+            double amount = segment / (double) segments;
+            double jitter = segment == segments ? 0.0D : Math.sin(seed + segment * 8.13D) * 1.15D;
+            double jitterZ = segment == segments ? 0.0D : Math.cos(seed * 0.7D + segment * 5.37D) * 1.15D;
+            double x = startX + (endX - startX) * amount + jitter;
+            double y = baseY + height * (1.0D - amount);
+            double z = startZ + (endZ - startZ) * amount + jitterZ;
+            drawWorldLine(
+                    lines,
+                    poseStack,
+                    previousX,
+                    previousY,
+                    previousZ,
+                    x,
+                    y,
+                    z,
+                    0.25F,
+                    0.78F,
+                    1.0F,
+                    alpha * 0.72F
+            );
+            drawWorldLine(
+                    lines,
+                    poseStack,
+                    previousX + 0.025D,
+                    previousY,
+                    previousZ + 0.025D,
+                    x + 0.025D,
+                    y,
+                    z + 0.025D,
+                    0.88F,
+                    0.97F,
+                    1.0F,
+                    alpha
+            );
+            previousX = x;
+            previousY = y;
+            previousZ = z;
+        }
+    }
+
+    private static void drawChargeLattice(
+            Minecraft minecraft,
+            PoseStack poseStack,
+            double localX,
+            double localY,
+            double localZ,
+            float progress,
+            float charge
+    ) {
+        VertexConsumer lines = minecraft.renderBuffers().bufferSource().getBuffer(RenderType.lines());
+        double radius = Math.max(1.5D, strikeRadius * (0.22D + charge * 0.78D));
+        double rotation = progress * Math.PI * 7.0D;
+        float alpha = 0.18F + charge * 0.42F;
+
+        drawWorldRing(lines, poseStack, localX, localZ, localY + 0.16D, radius,
+                0.18F, 0.82F, 1.0F, alpha);
+        drawWorldRing(lines, poseStack, localX, localZ, localY + 0.22D, radius * 0.76D,
+                0.48F, 0.22F, 1.0F, alpha * 0.8F);
+        drawWorldRing(lines, poseStack, localX, localZ, localY + 0.28D, radius * 0.42D,
+                1.0F, 0.24F, 0.34F, alpha * 0.9F);
+
+        for (int i = 0; i < 12; i++) {
+            double angle = rotation + Math.PI * 2.0D * i / 12.0D;
+            double x = localX + Math.cos(angle) * radius;
+            double z = localZ + Math.sin(angle) * radius;
+            double innerX = localX + Math.cos(angle - 0.34D) * radius * 0.42D;
+            double innerZ = localZ + Math.sin(angle - 0.34D) * radius * 0.42D;
+            drawWorldLine(lines, poseStack, x, localY + 0.1D, z,
+                    innerX, localY + 0.1D + charge * 5.0D, innerZ,
+                    0.28F, 0.84F, 1.0F, alpha);
+
+            if (i % 2 == 0) {
+                double pillarHeight = 5.0D + charge * 26.0D;
+                drawWorldLine(lines, poseStack, x, localY, z,
+                        x, localY + pillarHeight, z,
+                        0.22F, 0.64F, 1.0F, alpha * 0.7F);
+            }
+        }
+
+        minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
+    }
+
+    private static void drawImpactCore(
+            Minecraft minecraft,
+            PoseStack poseStack,
+            double localX,
+            double localY,
+            double localZ,
+            float progress
+    ) {
+        VertexConsumer lines = minecraft.renderBuffers().bufferSource().getBuffer(RenderType.lines());
+        float impact = clamp01((progress - IMPACT_SCENE_START) / (IMPACT_BEAM_END - IMPACT_SCENE_START));
+        float pulse = 0.62F + 0.38F * (float) Math.sin(progress * Math.PI * 90.0D);
+        double radius = Math.max(1.0D, strikeRadius * (0.12D + impact * 0.2D));
+        double rotation = progress * Math.PI * 11.0D;
+
+        drawWorldRing(lines, poseStack, localX, localZ, localY + 0.08D, radius,
+                1.0F, 0.86F, 0.52F, pulse);
+        drawWorldRing(lines, poseStack, localX, localZ, localY + 0.2D, radius * 0.66D,
+                1.0F, 0.24F, 0.12F, pulse * 0.8F);
+        for (int i = 0; i < 8; i++) {
+            double angle = rotation + Math.PI * 2.0D * i / 8.0D;
+            double x = localX + Math.cos(angle) * radius;
+            double z = localZ + Math.sin(angle) * radius;
+            drawWorldLine(lines, poseStack, localX, localY + 0.08D, localZ,
+                    x, localY + 0.08D, z,
+                    1.0F, 0.44F, 0.12F, pulse * 0.65F);
+        }
+        minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
+    }
+
+    private static void spawnChargeParticles(Minecraft minecraft, float progress) {
+        if (progress < CHARGE_SCENE_START
+                || progress >= IMPACT_BEAM_END
+                || (lastChargeParticleTick != Long.MIN_VALUE
+                && minecraft.level.getGameTime() - lastChargeParticleTick < CHARGE_PARTICLE_INTERVAL)) {
+            return;
+        }
+        lastChargeParticleTick = minecraft.level.getGameTime();
+
+        float charge = clamp01(
+                (progress - CHARGE_SCENE_START) / (IMPACT_SCENE_START - CHARGE_SCENE_START)
+        );
+        Vec3 camera = minecraft.gameRenderer.getMainCamera().getPosition();
+        double radius = Math.max(1.5D, strikeRadius * (0.42D - charge * 0.37D));
+        double rotation = minecraft.level.getGameTime() * 0.16D;
+        for (int i = 0; i < 24; i++) {
+            double angle = rotation + Math.PI * 2.0D * i / 24.0D;
+            double x = targetX + Math.cos(angle) * radius;
+            double z = targetZ + Math.sin(angle) * radius;
+            double y = targetY + 1.0D + charge * (10.0D + i % 5 * 3.0D);
+            double dx = x - camera.x;
+            double dy = y - camera.y;
+            double dz = z - camera.z;
+            if (dx * dx + dy * dy + dz * dz > SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED) {
+                continue;
+            }
+
+            minecraft.level.addParticle(
+                    i % 3 == 0 ? ParticleTypes.END_ROD : ParticleTypes.ELECTRIC_SPARK,
+                    x,
+                    y,
+                    z,
+                    -Math.cos(angle) * 0.08D,
+                    -0.14D - charge * 0.12D,
+                    -Math.sin(angle) * 0.08D
+            );
+            if (i % 4 == 0) {
+                minecraft.level.addParticle(
+                        ParticleTypes.REVERSE_PORTAL,
+                        x,
+                        y,
+                        z,
+                        (targetX - x) * 0.012D,
+                        -0.08D,
+                        (targetZ - z) * 0.012D
+                );
+            }
+        }
+    }
+
     private static void spawnShockwaveParticles(Minecraft minecraft, float progress) {
+        if (progress >= IMPACT_BEAM_END && !impactBurstSpawned) {
+            impactBurstSpawned = true;
+            spawnImpactBursts(minecraft);
+        }
+
         if (progress < IMPACT_BEAM_END
                 || (lastShockwaveParticleTick != Long.MIN_VALUE
                 && minecraft.level.getGameTime() - lastShockwaveParticleTick
@@ -308,6 +638,8 @@ public final class CutsceneOverlay {
             return;
         }
         lastShockwaveParticleTick = minecraft.level.getGameTime();
+
+        spawnLightningParticles(minecraft, progress);
 
         float shockwaveProgress = Math.min(
                 1.0F,
@@ -352,6 +684,120 @@ public final class CutsceneOverlay {
         }
     }
 
+    private static void spawnLightningParticles(Minecraft minecraft, float progress) {
+        double elapsedTicks = (progress - IMPACT_BEAM_END) * duration;
+        if (elapsedTicks < 0.0D || elapsedTicks >= 24.0D) {
+            return;
+        }
+
+        int strikeIndex = (int) (elapsedTicks / 6.0D);
+        if (elapsedTicks - strikeIndex * 6.0D >= 4.0D) {
+            return;
+        }
+
+        Vec3 camera = minecraft.gameRenderer.getMainCamera().getPosition();
+        double baseY = Math.floor(targetY) + 1.05D;
+        double height = 9.0D + (strikeIndex % 3) * 3.0D;
+        double spread = Math.min(9.0D, Math.max(2.0D, strikeRadius * 0.06D));
+        int boltCount = strikeRadius >= 40 ? 3 : 2;
+        for (int bolt = 0; bolt < boltCount; bolt++) {
+            double seed = strikeIndex * 17.0D + bolt * 31.0D;
+            double startX = targetX + Math.sin(seed * 1.31D) * spread;
+            double startZ = targetZ + Math.cos(seed * 0.91D) * spread;
+            double endX = targetX + Math.sin(seed * 0.73D) * spread * 0.16D;
+            double endZ = targetZ + Math.cos(seed * 1.17D) * spread * 0.16D;
+            double previousX = startX;
+            double previousY = baseY + height;
+            double previousZ = startZ;
+            for (int segment = 1; segment <= 8; segment++) {
+                double amount = segment / 8.0D;
+                double jitter = segment == 8 ? 0.0D : Math.sin(seed + segment * 8.13D) * 1.1D;
+                double jitterZ = segment == 8 ? 0.0D : Math.cos(seed * 0.7D + segment * 5.37D) * 1.1D;
+                double x = startX + (endX - startX) * amount + jitter;
+                double y = baseY + height * (1.0D - amount);
+                double z = startZ + (endZ - startZ) * amount + jitterZ;
+                if (camera.distanceToSqr(x, y, z) <= SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED) {
+                    minecraft.level.addParticle(
+                            ParticleTypes.ELECTRIC_SPARK,
+                            x,
+                            y,
+                            z,
+                            (x - previousX) * 2.0D,
+                            (y - previousY) * 2.0D,
+                            (z - previousZ) * 2.0D
+                    );
+                    if (segment % 2 == 0) {
+                        minecraft.level.addParticle(
+                                ParticleTypes.END_ROD,
+                                x,
+                                y,
+                                z,
+                                0.0D,
+                                -0.04D,
+                                0.0D
+                        );
+                    }
+                }
+                previousX = x;
+                previousY = y;
+                previousZ = z;
+            }
+        }
+    }
+
+    private static void spawnImpactBursts(Minecraft minecraft) {
+        Vec3 camera = minecraft.gameRenderer.getMainCamera().getPosition();
+        int burstCount = Math.min(32, 6 + strikeRadius / 8);
+        int ringCount = Math.min(4, 1 + strikeRadius / 50);
+        double viewDistanceSquared = SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED;
+        spawnImpactBurst(minecraft, camera, targetX, targetY + 0.5D, targetZ, viewDistanceSquared);
+
+        for (int i = 0; i < burstCount; i++) {
+            int ring = i % ringCount;
+            double ringRadius = strikeRadius * (ring + 1.0D) / ringCount;
+            double angle = i * 2.399963229728653D + ring * 0.42D;
+            double x = targetX + Math.cos(angle) * ringRadius;
+            double z = targetZ + Math.sin(angle) * ringRadius;
+            double y = targetY + 0.35D + (ring % 2) * 0.45D;
+            if (camera.distanceToSqr(x, y, z) > viewDistanceSquared) {
+                continue;
+            }
+
+            spawnImpactBurst(minecraft, camera, x, y, z, viewDistanceSquared);
+            minecraft.level.addParticle(
+                    ParticleTypes.FLAME,
+                    x,
+                    y,
+                    z,
+                    Math.cos(angle) * (0.35D + ring * 0.12D),
+                    0.2D + ring * 0.08D,
+                    Math.sin(angle) * (0.35D + ring * 0.12D)
+            );
+        }
+    }
+
+    private static void spawnImpactBurst(
+            Minecraft minecraft,
+            Vec3 camera,
+            double x,
+            double y,
+            double z,
+            double viewDistanceSquared
+    ) {
+        if (camera.distanceToSqr(x, y, z) > viewDistanceSquared) {
+            return;
+        }
+        minecraft.level.addParticle(
+                ParticleTypes.EXPLOSION_EMITTER,
+                x,
+                y,
+                z,
+                0.0D,
+                0.0D,
+                0.0D
+        );
+    }
+
     private static void drawShockwaveSpokes(
             VertexConsumer lines,
             PoseStack poseStack,
@@ -382,6 +828,39 @@ public final class CutsceneOverlay {
         }
     }
 
+    private static void drawShockwaveCrown(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double centerZ,
+            double y,
+            double radius,
+            float alpha
+    ) {
+        for (int i = 0; i < 16; i++) {
+            double angle = Math.PI * 2.0D * i / 16.0D;
+            double x = centerX + Math.cos(angle) * radius;
+            double z = centerZ + Math.sin(angle) * radius;
+            double height = 0.7D + (i % 4 == 0 ? 4.2D : 2.1D) * alpha;
+            float green = i % 4 == 0 ? 0.72F : 0.22F;
+            float blue = i % 4 == 0 ? 0.18F : 0.06F;
+            drawWorldLine(
+                    lines,
+                    poseStack,
+                    x,
+                    y,
+                    z,
+                    x,
+                    y + height,
+                    z,
+                    1.0F,
+                    green,
+                    blue,
+                    alpha * (i % 4 == 0 ? 0.88F : 0.45F)
+            );
+        }
+    }
+
     private static void drawSpaceScene(
             RenderGuiOverlayEvent.Post event,
             int width,
@@ -399,9 +878,24 @@ public final class CutsceneOverlay {
                 (opaqueAlpha << 24) | 0x00030A1C
         );
         drawStars(event, width, height, sceneAlpha, progress);
+        drawMeteors(event, width, height, progress, sceneAlpha);
 
-        int planetRadius = Math.max(24, Math.min(width / 4, height / 3));
-        int planetCenterY = height * 3 / 4;
+        int planetRadius = Math.max(24, Math.min(width / 4, height / 4));
+        int planetCenterY = height * 4 / 5;
+        int planetTop = planetCenterY - planetRadius;
+        int titleSafeTop = Math.max(38, height / 18 + 32);
+        int imageTopLimit = titleSafeTop + Math.max(12, height / 24);
+        int imageBottomLimit = Math.min(
+                planetTop - 4,
+                height / 2 - Math.max(28, height / 10)
+        );
+        int availableHeight = Math.max(0, imageBottomLimit - imageTopLimit);
+        int orbitalWidth = Math.min(
+                Math.min(width - 24, availableHeight * 512 / 320),
+                Math.max(160, (int) (planetRadius * 1.8F))
+        );
+        int orbitalHeight = orbitalWidth * 320 / 512;
+        int orbitalCenterY = imageTopLimit + availableHeight / 2;
         drawPlanet(event, centerX, planetCenterY, planetRadius, sceneAlpha);
         drawEllipse(
                 event,
@@ -419,6 +913,17 @@ public final class CutsceneOverlay {
                 Math.max(10, planetRadius / 3),
                 ((int) (sceneAlpha * 58.0F) << 24) | 0x0047BFFF
         );
+        drawOrbitalWeapon(
+                event,
+                centerX,
+                orbitalCenterY,
+                planetTop,
+                orbitalWidth,
+                orbitalHeight,
+                progress,
+                sceneAlpha
+        );
+        drawAtmosphericHorizon(event, planetTop, centerX, planetRadius, progress, sceneAlpha);
         drawScanLines(event, width, height, sceneAlpha);
         drawCosmicVortex(event, centerX, planetCenterY, planetRadius, progress, sceneAlpha);
         drawSceneLabels(
@@ -434,7 +939,7 @@ public final class CutsceneOverlay {
         if (progress < 0.18F) {
             return "gui.entropyinversion.cutscene.space";
         }
-        if (progress < 0.34F) {
+        if (progress < LOCK_SCENE_START) {
             return "gui.entropyinversion.cutscene.charge";
         }
         if (progress < IMPACT_SCENE_START) {
@@ -452,7 +957,7 @@ public final class CutsceneOverlay {
             int height,
             float alpha
     ) {
-        int lineAlpha = (int) (alpha * 20.0F);
+        int lineAlpha = (int) (alpha * 11.0F);
         for (int i = 0; i < SCANLINE_COUNT; i++) {
             int y = i * height / SCANLINE_COUNT;
             event.getGuiGraphics().fill(
@@ -556,7 +1061,8 @@ public final class CutsceneOverlay {
             int red = 14 + shade / 3;
             int green = 66 + shade;
             int blue = 112 + shade * 2;
-            int rowAlpha = (int) (alpha * Math.max(0.0F, Math.min(1.0F, (radius - y) / (radius * 0.18F))));
+            int rowAlpha = (int) (255.0F * alpha
+                    * Math.max(0.0F, Math.min(1.0F, (radius - y) / (radius * 0.18F))));
             int color = (rowAlpha << 24) | (red << 16) | (green << 8) | blue;
             event.getGuiGraphics().fill(
                     centerX - halfWidth,
@@ -663,6 +1169,10 @@ public final class CutsceneOverlay {
                 .endVertex();
     }
 
+    private static float clamp01(float value) {
+        return Math.max(0.0F, Math.min(1.0F, value));
+    }
+
     private static void drawImpactScene(
             RenderGuiOverlayEvent.Post event,
             int width,
@@ -679,6 +1189,254 @@ public final class CutsceneOverlay {
                         ? "gui.entropyinversion.cutscene.impact"
                         : "gui.entropyinversion.cutscene.detonation"
         );
+        drawImpactTelemetry(event, width, height, progress);
+    }
+
+    private static void drawOrbitalWeapon(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            int planetSurfaceY,
+            int imageWidth,
+            int imageHeight,
+            float progress,
+            float alpha
+    ) {
+        if (imageWidth <= 0 || imageHeight <= 0) {
+            return;
+        }
+
+        float charge = clamp01((progress - CHARGE_SCENE_START) / (IMPACT_SCENE_START - CHARGE_SCENE_START));
+        float pulse = 1.0F + 0.018F * (float) Math.sin(progress * 38.0D);
+        int tetherY = centerY + (int) (imageHeight * 0.36F);
+        int tetherBottom = tetherY + (int) ((planetSurfaceY - tetherY) * (0.08F + charge * 0.92F));
+        int tetherAlpha = (int) (alpha * (40.0F + charge * 115.0F));
+        PoseStack pose = event.getGuiGraphics().pose();
+        pose.pushPose();
+        pose.translate(centerX, centerY, 0.0F);
+        pose.scale(pulse, pulse, 1.0F);
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, alpha);
+        event.getGuiGraphics().blit(
+                ORBITAL_ARRAY_TEXTURE,
+                -imageWidth / 2,
+                -imageHeight / 2,
+                imageWidth,
+                imageHeight,
+                0.0F,
+                0.0F,
+                512,
+                320,
+                512,
+                320
+        );
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        pose.popPose();
+
+        drawOrbitalWeaponSilhouette(event, centerX, centerY, imageWidth, imageHeight, progress, alpha);
+
+        event.getGuiGraphics().fill(
+                centerX - 2,
+                tetherY - 1,
+                centerX + 2,
+                tetherBottom,
+                ((int) (alpha * (90.0F + charge * 145.0F)) << 24) | 0x004ADFFF
+        );
+        event.getGuiGraphics().fill(
+                centerX - 1,
+                tetherY,
+                centerX + 1,
+                tetherBottom,
+                (tetherAlpha << 24) | 0x004ADFFF
+        );
+        int scanY = tetherY
+                + Math.floorMod((int) (progress * 700.0F), Math.max(1, tetherBottom - tetherY));
+        event.getGuiGraphics().fill(
+                centerX - 5,
+                scanY,
+                centerX + 6,
+                scanY + 1,
+                ((int) (alpha * 220.0F) << 24) | 0x00FFFFFF
+        );
+    }
+
+    private static void drawOrbitalWeaponSilhouette(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            int imageWidth,
+            int imageHeight,
+            float progress,
+            float alpha
+    ) {
+        float scale = imageWidth / 512.0F;
+        int pulseAlpha = (int) (alpha * 232.0F);
+        int hull = (pulseAlpha << 24) | 0x0008172C;
+        int hullEdge = (pulseAlpha << 24) | 0x0065E9FF;
+        int glow = ((int) (alpha * 220.0F) << 24) | 0x00D7FBFF;
+        int reactor = ((int) (alpha * 245.0F) << 24) | 0x00FF5B9B;
+        int coreSize = Math.max(3, (int) ((5.0F + 3.0F * (float) Math.sin(progress * 44.0D)) * scale));
+
+        fillScaled(event, centerX, centerY, scale, -88, -15, 176, 30, hull);
+        fillScaled(event, centerX, centerY, scale, -56, -27, 112, 54, hull);
+        fillScaled(event, centerX, centerY, scale, -34, -38, 68, 76, hull);
+
+        drawScaledSegment(event, centerX, centerY, scale, -188, -34, -40, -12, 20, hull);
+        drawScaledSegment(event, centerX, centerY, scale, 188, -34, 40, -12, 20, hull);
+        drawScaledSegment(event, centerX, centerY, scale, -186, 34, -46, 15, 14, hull);
+        drawScaledSegment(event, centerX, centerY, scale, 186, 34, 46, 15, 14, hull);
+        drawScaledSegment(event, centerX, centerY, scale, -174, -34, -50, -17, 3, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, 174, -34, 50, -17, 3, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, -174, 34, -55, 18, 2, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, 174, 34, 55, 18, 2, hullEdge);
+
+        drawScaledSegment(event, centerX, centerY, scale, -28, -26, 0, -48, 5, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, 28, -26, 0, -48, 5, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, -17, 31, 0, 74, 4, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, 17, 31, 0, 74, 4, hullEdge);
+        drawScaledSegment(event, centerX, centerY, scale, -7, 36, 0, 91, 2, glow);
+        drawScaledSegment(event, centerX, centerY, scale, 7, 36, 0, 91, 2, glow);
+        drawScaledSegment(event, centerX, centerY, scale, -182, 0, -42, 0, 3, glow);
+        drawScaledSegment(event, centerX, centerY, scale, 182, 0, 42, 0, 3, glow);
+
+        fillScaled(event, centerX, centerY, scale, -23, -23, 46, 46, hullEdge);
+        fillScaled(event, centerX, centerY, scale, -18, -18, 36, 36, hull);
+        fillScaled(event, centerX, centerY, scale, -coreSize, -coreSize, coreSize * 2, coreSize * 2, reactor);
+        fillScaled(event, centerX, centerY, scale, -2, -2, 4, 4, glow);
+
+        for (int i = 0; i < 4; i++) {
+            int x = (int) ((i * 38 - 57) * scale);
+            fillScaled(event, centerX, centerY, scale, x, -4, 10, 8,
+                    i % 2 == 0 ? reactor : hullEdge);
+        }
+    }
+
+    private static void drawAtmosphericHorizon(
+            RenderGuiOverlayEvent.Post event,
+            int planetTop,
+            int centerX,
+            int planetRadius,
+            float progress,
+            float alpha
+    ) {
+        int horizonY = planetTop + Math.max(2, planetRadius / 18);
+        int glowAlpha = (int) (alpha * (50.0F + 55.0F
+                * (0.5F + 0.5F * (float) Math.sin(progress * Math.PI * 10.0D))));
+        int horizonColor = (glowAlpha << 24) | 0x0047CFFF;
+        event.getGuiGraphics().fill(
+                centerX - planetRadius - 18,
+                horizonY,
+                centerX + planetRadius + 18,
+                horizonY + 2,
+                horizonColor
+        );
+        event.getGuiGraphics().fill(
+                centerX - planetRadius / 2,
+                horizonY - 2,
+                centerX + planetRadius / 2,
+                horizonY,
+                ((glowAlpha / 2) << 24) | 0x00FF5F9C
+        );
+
+        for (int i = 0; i < 7; i++) {
+            int x = centerX - planetRadius + (i + 1) * (planetRadius * 2) / 8;
+            int pulse = (int) (alpha * (70.0F + 120.0F
+                    * (0.5F + 0.5F * (float) Math.sin(progress * 28.0D + i))));
+            event.getGuiGraphics().fill(
+                    x - 1,
+                    horizonY - 3 - (i % 3),
+                    x + 2,
+                    horizonY + 4,
+                    (pulse << 24) | (i % 2 == 0 ? 0x00FF5F9C : 0x006FEAFF)
+            );
+        }
+
+    }
+
+    private static void fillScaled(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            float scale,
+            int offsetX,
+            int offsetY,
+            int width,
+            int height,
+            int color
+    ) {
+        int left = centerX + Math.round(offsetX * scale);
+        int top = centerY + Math.round(offsetY * scale);
+        int right = left + Math.max(1, Math.round(width * scale));
+        int bottom = top + Math.max(1, Math.round(height * scale));
+        event.getGuiGraphics().fill(left, top, right, bottom, color);
+    }
+
+    private static void drawScaledSegment(
+            RenderGuiOverlayEvent.Post event,
+            int centerX,
+            int centerY,
+            float scale,
+            int startX,
+            int startY,
+            int endX,
+            int endY,
+            int thickness,
+            int color
+    ) {
+        int x0 = centerX + Math.round(startX * scale);
+        int y0 = centerY + Math.round(startY * scale);
+        int x1 = centerX + Math.round(endX * scale);
+        int y1 = centerY + Math.round(endY * scale);
+        float deltaX = x1 - x0;
+        float deltaY = y1 - y0;
+        float length = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        PoseStack pose = event.getGuiGraphics().pose();
+        pose.pushPose();
+        pose.translate((x0 + x1) / 2.0F, (y0 + y1) / 2.0F, 0.0F);
+        pose.mulPose(Axis.ZP.rotationDegrees((float) Math.toDegrees(Math.atan2(deltaY, deltaX))));
+        int lineWidth = Math.max(1, Math.round(thickness * scale));
+        event.getGuiGraphics().fill(-Math.round(length / 2.0F), -lineWidth / 2,
+                Math.round(length / 2.0F), (lineWidth + 1) / 2, color);
+        pose.popPose();
+    }
+
+    private static void drawImpactTelemetry(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        int centerX = width / 2;
+        int centerY = height / 2;
+        float impactProgress = clamp01(
+                (progress - IMPACT_SCENE_START) / (1.0F - IMPACT_SCENE_START)
+        );
+        int ringRadius = 22 + (int) (impactProgress * Math.min(width, height) * 0.42F);
+        int ringAlpha = (int) ((1.0F - impactProgress * 0.45F) * 125.0F);
+        int ringColor = (ringAlpha << 24) | 0x00FF5366;
+        drawEllipse(event, centerX, centerY, ringRadius, Math.max(8, ringRadius / 3), ringColor);
+        drawEllipse(event, centerX, centerY, Math.max(12, ringRadius - 8), Math.max(6, ringRadius / 3 - 4),
+                ((ringAlpha / 2) << 24) | 0x00FFB156);
+
+        int sweepY = Math.floorMod((int) (progress * height * 9.0F), Math.max(1, height));
+        event.getGuiGraphics().fill(0, sweepY, width, sweepY + 1, 0x28FF5E68);
+        event.getGuiGraphics().fill(
+                0,
+                sweepY - 3,
+                width,
+                sweepY - 2,
+                0x16FF8B63
+        );
+
+        int bracketSize = 18 + (int) ((1.0F - impactProgress) * 32.0F);
+        int bracketColor = 0xD9FF6574;
+        drawReticleCorner(event, centerX - ringRadius, centerY - ringRadius / 3, bracketSize, 4,
+                bracketColor, -1, -1);
+        drawReticleCorner(event, centerX + ringRadius, centerY - ringRadius / 3, bracketSize, 4,
+                bracketColor, 1, -1);
+        drawReticleCorner(event, centerX - ringRadius, centerY + ringRadius / 3, bracketSize, 4,
+                bracketColor, -1, 1);
+        drawReticleCorner(event, centerX + ringRadius, centerY + ringRadius / 3, bracketSize, 4,
+                bracketColor, 1, 1);
     }
 
     private static void drawTargetReticle(
@@ -845,7 +1603,7 @@ public final class CutsceneOverlay {
                 minecraft.font,
                 Component.translatable(stageKey),
                 centerX,
-                height / 5,
+                Math.max(10, height / 18 + 6),
                 titleColor
         );
         event.getGuiGraphics().drawCenteredString(
@@ -856,7 +1614,7 @@ public final class CutsceneOverlay {
                         (int) Math.floor(targetZ)
                 ),
                 centerX,
-                height / 5 + 14,
+                Math.max(10, height / 18 + 6) + 14,
                 detailColor
         );
     }
