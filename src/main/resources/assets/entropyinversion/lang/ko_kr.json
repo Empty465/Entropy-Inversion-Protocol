@@ -6,6 +6,8 @@
   "message.entropyinversion.no_target": "512블록 이내의 블록을 조준하세요.",
   "message.entropyinversion.unloaded_target": "조준한 청크가 아직 로드되지 않았습니다.",
   "message.entropyinversion.invalid_radius": "타격 반경이 유효하지 않습니다.",
+  "message.entropyinversion.in_strike_zone": "경고: 현재 엔트로피 역전 타격 범위 안에 있습니다 (반경 %1$s블록).",
+  "death.attack.entropyinversion": "%1$s은(는) 엔트로피 역전 프로토콜로 인하여 소멸되었습니다.",
   "message.entropyinversion.cooldown": "요청기가 재사용 대기 중입니다.",
   "message.entropyinversion.requested": "%1$s, %2$s, %3$s 좌표에 엔트로피 역전 타격을 요청했습니다.",
   "message.entropyinversion.complete": "엔트로피 역전 타격 범위 정리가 완료되었습니다.",

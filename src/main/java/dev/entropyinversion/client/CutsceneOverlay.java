@@ -1,12 +1,20 @@
 package dev.entropyinversion.client;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.blockentity.BeaconRenderer;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
+import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -22,23 +30,29 @@ public final class CutsceneOverlay {
     private static final float IMPACT_SCENE_START = 0.43F;
     private static final float IMPACT_BEAM_END = 0.82F;
     private static final int STAR_COUNT = 112;
+    private static final int SHOCKWAVE_PARTICLE_INTERVAL = 2;
+    private static final int SHOCKWAVE_PARTICLE_SEGMENTS = 48;
+    private static final double SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED = 96.0D * 96.0D;
     private static long startedAt;
+    private static long lastShockwaveParticleTick = Long.MIN_VALUE;
     private static int duration;
     private static int strikeRadius;
     private static int soundStage;
     private static double targetX;
+    private static double targetY;
     private static double targetZ;
     private static boolean active;
 
     private CutsceneOverlay() {
     }
 
-    public static void begin(double x, double z, int ticks, int radius) {
+    public static void begin(double x, double y, double z, int ticks, int radius) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) {
             return;
         }
         targetX = x;
+        targetY = y;
         targetZ = z;
         duration = Math.max(1, ticks);
         strikeRadius = Math.max(
@@ -46,6 +60,7 @@ public final class CutsceneOverlay {
                 Math.min(EntropyInversionRequestorItem.MAX_STRIKE_RADIUS, radius)
         );
         startedAt = minecraft.level.getGameTime();
+        lastShockwaveParticleTick = Long.MIN_VALUE;
         soundStage = 0;
         active = true;
         minecraft.getSoundManager().play(
@@ -63,6 +78,7 @@ public final class CutsceneOverlay {
             }
 
             float progress = (minecraft.level.getGameTime() - startedAt) / (float) duration;
+            spawnShockwaveParticles(minecraft, progress);
             if (progress >= IMPACT_SCENE_START && soundStage == 0) {
                 soundStage = 1;
                 minecraft.getSoundManager().play(
@@ -90,8 +106,6 @@ public final class CutsceneOverlay {
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
-        int centerY = height / 2;
-
         if (progress < IMPACT_SCENE_START) {
             float sceneAlpha = progress <= SPACE_SCENE_END
                     ? 1.0F
@@ -101,7 +115,246 @@ public final class CutsceneOverlay {
             return;
         }
 
-        drawImpactScene(event, width, height, centerX, centerY, progress);
+        drawImpactScene(event, width, height, centerX, progress);
+    }
+
+    @SubscribeEvent
+    public static void onWorldRender(RenderLevelStageEvent event) {
+        if (!active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            active = false;
+            return;
+        }
+
+        float progress = (float) (
+                (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
+        );
+        if (progress < IMPACT_SCENE_START) {
+            return;
+        }
+
+        BlockPos targetBlock = BlockPos.containing(targetX, targetY, targetZ);
+        int beamHeight = Math.min(
+                BeaconRenderer.MAX_RENDER_Y,
+                minecraft.level.getMaxBuildHeight() - targetBlock.getY()
+        );
+        if (beamHeight <= 0) {
+            return;
+        }
+
+        Vec3 camera = event.getCamera().getPosition();
+        PoseStack poseStack = event.getPoseStack();
+        poseStack.pushPose();
+        poseStack.translate(
+                targetBlock.getX() - camera.x,
+                targetBlock.getY() - camera.y,
+                targetBlock.getZ() - camera.z
+        );
+
+        BeaconRenderer.renderBeaconBeam(
+                poseStack,
+                minecraft.renderBuffers().bufferSource(),
+                BeaconRenderer.BEAM_LOCATION,
+                event.getPartialTick(),
+                1.0F,
+                minecraft.level.getGameTime(),
+                0,
+                beamHeight,
+                new float[]{1.0F, 0.025F, 0.08F},
+                0.38F,
+                0.48F
+        );
+        BeaconRenderer.renderBeaconBeam(
+                poseStack,
+                minecraft.renderBuffers().bufferSource(),
+                BeaconRenderer.BEAM_LOCATION,
+                event.getPartialTick(),
+                1.0F,
+                minecraft.level.getGameTime(),
+                0,
+                beamHeight,
+                new float[]{1.0F, 0.16F, 0.32F},
+                0.2F,
+                0.3F
+        );
+        BeaconRenderer.renderBeaconBeam(
+                poseStack,
+                minecraft.renderBuffers().bufferSource(),
+                BeaconRenderer.BEAM_LOCATION,
+                event.getPartialTick(),
+                1.0F,
+                minecraft.level.getGameTime(),
+                0,
+                beamHeight,
+                new float[]{1.0F, 0.88F, 0.68F},
+                0.045F,
+                0.09F
+        );
+        minecraft.renderBuffers().bufferSource().endBatch(
+                RenderType.beaconBeam(BeaconRenderer.BEAM_LOCATION, false)
+        );
+        minecraft.renderBuffers().bufferSource().endBatch(
+                RenderType.beaconBeam(BeaconRenderer.BEAM_LOCATION, true)
+        );
+
+        if (progress >= IMPACT_BEAM_END) {
+            float shockwaveProgress = Math.min(
+                    1.0F,
+                    (progress - IMPACT_BEAM_END) / (1.0F - IMPACT_BEAM_END)
+            );
+            double shockwaveRadius = Math.max(1.0D, strikeRadius * shockwaveProgress);
+            VertexConsumer lines = minecraft.renderBuffers()
+                    .bufferSource()
+                    .getBuffer(RenderType.lines());
+            double localX = targetX - targetBlock.getX();
+            double localZ = targetZ - targetBlock.getZ();
+            double localY = targetY - targetBlock.getY() + 0.12D;
+            float alpha = (float) Math.pow(1.0F - shockwaveProgress, 0.45F);
+
+            for (int layer = 0; layer < 5; layer++) {
+                double trailOffset = strikeRadius * (0.012D + layer * 0.009D);
+                double layerRadius = Math.max(0.5D, shockwaveRadius - trailOffset);
+                float layerAlpha = alpha * (1.0F - layer * 0.12F);
+                if (layer == 0) {
+                    drawWorldRing(
+                            lines,
+                            poseStack,
+                            localX,
+                            localZ,
+                            localY,
+                            layerRadius,
+                            1.0F,
+                            0.95F,
+                            0.72F,
+                            layerAlpha
+                    );
+                } else if (layer <= 2) {
+                    drawWorldRing(
+                            lines,
+                            poseStack,
+                            localX,
+                            localZ,
+                            localY + layer * 0.035D,
+                            layerRadius,
+                            1.0F,
+                            0.34F,
+                            0.06F,
+                            layerAlpha
+                    );
+                } else {
+                    drawWorldRing(
+                            lines,
+                            poseStack,
+                            localX,
+                            localZ,
+                            localY + layer * 0.035D,
+                            layerRadius,
+                            0.95F,
+                            0.08F,
+                            0.025F,
+                            layerAlpha
+                    );
+                }
+            }
+
+            drawShockwaveSpokes(
+                    lines,
+                    poseStack,
+                    localX,
+                    localZ,
+                    localY,
+                    shockwaveRadius,
+                    alpha
+            );
+            minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
+        }
+        poseStack.popPose();
+    }
+
+    private static void spawnShockwaveParticles(Minecraft minecraft, float progress) {
+        if (progress < IMPACT_BEAM_END
+                || (lastShockwaveParticleTick != Long.MIN_VALUE
+                && minecraft.level.getGameTime() - lastShockwaveParticleTick
+                < SHOCKWAVE_PARTICLE_INTERVAL)) {
+            return;
+        }
+        lastShockwaveParticleTick = minecraft.level.getGameTime();
+
+        float shockwaveProgress = Math.min(
+                1.0F,
+                (progress - IMPACT_BEAM_END) / (1.0F - IMPACT_BEAM_END)
+        );
+        double radius = Math.max(1.0D, strikeRadius * shockwaveProgress);
+        Vec3 camera = minecraft.gameRenderer.getMainCamera().getPosition();
+        for (int i = 0; i < SHOCKWAVE_PARTICLE_SEGMENTS; i++) {
+            double angle = Math.PI * 2.0D * i / SHOCKWAVE_PARTICLE_SEGMENTS;
+            double x = targetX + Math.cos(angle) * radius;
+            double z = targetZ + Math.sin(angle) * radius;
+            double dx = Math.cos(angle) * 0.28D;
+            double dz = Math.sin(angle) * 0.28D;
+            double distanceX = x - camera.x;
+            double distanceY = targetY - camera.y;
+            double distanceZ = z - camera.z;
+            if (distanceX * distanceX + distanceY * distanceY + distanceZ * distanceZ
+                    > SHOCKWAVE_PARTICLE_VIEW_DISTANCE_SQUARED) {
+                continue;
+            }
+
+            minecraft.level.addParticle(
+                    ParticleTypes.FLAME,
+                    x,
+                    targetY + 0.15D,
+                    z,
+                    dx,
+                    0.08D,
+                    dz
+            );
+            if (i % 4 == 0) {
+                minecraft.level.addParticle(
+                        ParticleTypes.END_ROD,
+                        x,
+                        targetY + 0.3D,
+                        z,
+                        dx * 0.65D,
+                        0.16D,
+                        dz * 0.65D
+                );
+            }
+        }
+    }
+
+    private static void drawShockwaveSpokes(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double centerZ,
+            double y,
+            double radius,
+            float alpha
+    ) {
+        for (int i = 0; i < 32; i++) {
+            double angle = Math.PI * 2.0D * i / 32.0D;
+            double innerRadius = radius * 0.91D;
+            double outerRadius = radius * (i % 4 == 0 ? 1.035D : 0.985D);
+            drawWorldLine(
+                    lines,
+                    poseStack,
+                    centerX + Math.cos(angle) * innerRadius,
+                    y + 0.04D,
+                    centerZ + Math.sin(angle) * innerRadius,
+                    centerX + Math.cos(angle) * outerRadius,
+                    y + 0.04D,
+                    centerZ + Math.sin(angle) * outerRadius,
+                    1.0F,
+                    i % 4 == 0 ? 0.76F : 0.24F,
+                    0.08F,
+                    alpha * (i % 4 == 0 ? 0.95F : 0.55F)
+            );
+        }
     }
 
     private static void drawSpaceScene(
@@ -125,27 +378,6 @@ public final class CutsceneOverlay {
         int planetRadius = Math.max(24, Math.min(width / 4, height / 3));
         int planetCenterY = height * 3 / 4;
         drawPlanet(event, centerX, planetCenterY, planetRadius, sceneAlpha);
-
-        if (progress >= 0.21F) {
-            float beamProgress = (progress - 0.21F) / (SPACE_SCENE_END - 0.21F);
-            int beamBottom = planetCenterY - planetRadius + 4;
-            int beamTop = beamBottom - (int) (height * 0.56F * beamProgress);
-            int beamAlpha = (int) (sceneAlpha * Math.min(1.0F, beamProgress * 2.0F) * 210.0F);
-            event.getGuiGraphics().fill(
-                    centerX - 5,
-                    Math.max(0, beamTop),
-                    centerX + 6,
-                    beamBottom,
-                    (beamAlpha << 24) | 0x00FF517A
-            );
-            event.getGuiGraphics().fill(
-                    centerX - 1,
-                    Math.max(0, beamTop),
-                    centerX + 2,
-                    beamBottom,
-                    (beamAlpha << 24) | 0x00FFF1D6
-            );
-        }
 
         drawSceneLabels(
                 event,
@@ -243,51 +475,70 @@ public final class CutsceneOverlay {
         }
     }
 
+    private static void drawWorldRing(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double centerZ,
+            double y,
+            double radius,
+            float red,
+            float green,
+            float blue,
+            float alpha
+    ) {
+        for (int i = 0; i < 128; i++) {
+            double angle0 = Math.PI * 2.0D * i / 128.0D;
+            double angle1 = Math.PI * 2.0D * (i + 1) / 128.0D;
+            drawWorldLine(
+                    lines,
+                    poseStack,
+                    centerX + Math.cos(angle0) * radius,
+                    y,
+                    centerZ + Math.sin(angle0) * radius,
+                    centerX + Math.cos(angle1) * radius,
+                    y,
+                    centerZ + Math.sin(angle1) * radius,
+                    red,
+                    green,
+                    blue,
+                    alpha
+            );
+        }
+    }
+
+    private static void drawWorldLine(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double x0,
+            double y0,
+            double z0,
+            double x1,
+            double y1,
+            double z1,
+            float red,
+            float green,
+            float blue,
+            float alpha
+    ) {
+        PoseStack.Pose pose = poseStack.last();
+        lines.vertex(pose.pose(), (float) x0, (float) y0, (float) z0)
+                .color(red, green, blue, alpha)
+                .normal(pose.normal(), 0.0F, 1.0F, 0.0F)
+                .endVertex();
+        lines.vertex(pose.pose(), (float) x1, (float) y1, (float) z1)
+                .color(red, green, blue, alpha)
+                .normal(pose.normal(), 0.0F, 1.0F, 0.0F)
+                .endVertex();
+    }
+
     private static void drawImpactScene(
             RenderGuiOverlayEvent.Post event,
             int width,
             int height,
             int centerX,
-            int centerY,
             float progress
     ) {
-        event.getGuiGraphics().fill(0, 0, width, height, 0x40030A18);
-
-        float beamProgress = Math.max(
-                0.0F,
-                Math.min(1.0F, (progress - IMPACT_SCENE_START) / (IMPACT_BEAM_END - IMPACT_SCENE_START))
-        );
-        int beamBottom = centerY + (int) ((height - centerY) * beamProgress);
-        event.getGuiGraphics().fill(centerX - 9, 0, centerX + 10, beamBottom, 0x99FF4265);
-        event.getGuiGraphics().fill(centerX - 3, 0, centerX + 4, beamBottom, 0xDDFFF4E4);
-        event.getGuiGraphics().fill(0, centerY - 1, width, centerY + 2, 0x4437BFFF);
-
-        if (progress >= IMPACT_BEAM_END) {
-            float impactProgress = Math.min(
-                    1.0F,
-                    (progress - IMPACT_BEAM_END) / (1.0F - IMPACT_BEAM_END)
-            );
-            int maxRadius = Math.max(8, Math.min(width, height) * 2 / 5
-                    * strikeRadius / EntropyInversionRequestorItem.MAX_STRIKE_RADIUS);
-            int ringRadius = Math.max(2, (int) (maxRadius * impactProgress));
-            int ringAlpha = (int) (210.0F * (1.0F - impactProgress));
-            drawEllipse(
-                    event,
-                    centerX,
-                    centerY,
-                    ringRadius,
-                    Math.max(2, ringRadius / 2),
-                    (ringAlpha << 24) | 0x00FF9B75
-            );
-            event.getGuiGraphics().fill(
-                    0,
-                    0,
-                    width,
-                    height,
-                    ((int) (105.0F * (1.0F - impactProgress)) << 24) | 0x00E7F5FF
-            );
-        }
-
         drawSceneLabels(
                 event,
                 width,

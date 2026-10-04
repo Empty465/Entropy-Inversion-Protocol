@@ -10,12 +10,14 @@ import java.util.function.Supplier;
 
 public final class StrikeCutscenePacket {
     private final double x;
+    private final double y;
     private final double z;
     private final int duration;
     private final int radius;
 
-    public StrikeCutscenePacket(double x, double z, int duration, int radius) {
+    public StrikeCutscenePacket(double x, double y, double z, int duration, int radius) {
         this.x = x;
+        this.y = y;
         this.z = z;
         this.duration = duration;
         this.radius = radius;
@@ -23,6 +25,7 @@ public final class StrikeCutscenePacket {
 
     public static void encode(StrikeCutscenePacket packet, FriendlyByteBuf buffer) {
         buffer.writeDouble(packet.x);
+        buffer.writeDouble(packet.y);
         buffer.writeDouble(packet.z);
         buffer.writeVarInt(packet.duration);
         buffer.writeVarInt(packet.radius);
@@ -30,6 +33,7 @@ public final class StrikeCutscenePacket {
 
     public static StrikeCutscenePacket decode(FriendlyByteBuf buffer) {
         return new StrikeCutscenePacket(
+                buffer.readDouble(),
                 buffer.readDouble(),
                 buffer.readDouble(),
                 buffer.readVarInt(),
@@ -43,7 +47,13 @@ public final class StrikeCutscenePacket {
     ) {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () ->
-                () -> CutsceneOverlay.begin(packet.x, packet.z, packet.duration, packet.radius)));
+                () -> CutsceneOverlay.begin(
+                        packet.x,
+                        packet.y,
+                        packet.z,
+                        packet.duration,
+                        packet.radius
+                )));
         context.setPacketHandled(true);
     }
 }

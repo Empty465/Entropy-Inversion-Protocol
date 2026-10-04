@@ -3,9 +3,12 @@ package dev.entropyinversion.world;
 import dev.entropyinversion.network.StrikeCutscenePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
@@ -31,19 +34,21 @@ public final class StrikeManager {
 
     public static void schedule(ServerLevel level, Vec3 target, UUID owner, int radius) {
         LevelState state = LEVEL_STATES.computeIfAbsent(level, ignored -> new LevelState());
-        state.scheduled.add(new ScheduledStrike(
+        ScheduledStrike strike = new ScheduledStrike(
                 level.getGameTime() + CUTSCENE_TICKS,
                 target.x,
                 target.y,
                 target.z,
                 owner,
                 radius
-        ));
+        );
+        state.scheduled.add(strike);
+        warnPlayersInStrikeRadius(level, strike, level.getGameTime());
         Player player = level.getPlayerByUUID(owner);
         if (player instanceof ServerPlayer serverPlayer) {
             StrikeNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> serverPlayer),
-                    new StrikeCutscenePacket(target.x, target.z, CUTSCENE_TICKS, radius)
+                    new StrikeCutscenePacket(target.x, target.y, target.z, CUTSCENE_TICKS, radius)
             );
         }
     }
@@ -63,6 +68,7 @@ public final class StrikeManager {
         Iterator<ScheduledStrike> strikes = state.scheduled.iterator();
         while (strikes.hasNext()) {
             ScheduledStrike strike = strikes.next();
+            warnPlayersInStrikeRadius(level, strike, gameTime);
             if (strike.dueAt <= gameTime) {
                 strikes.remove();
                 impact(level, strike);
@@ -102,7 +108,7 @@ public final class StrikeManager {
                 level.getMaxBuildHeight(),
                 strike.z + radius + 1.0D
         );
-        removeEntities(level, area, strike.x, strike.z, strike.radius);
+        removeEntities(level, area, strike.x, strike.z, strike.radius, strike.owner);
         level.playSound(
                 null,
                 BlockPos.containing(strike.x, strike.y, strike.z),
@@ -171,7 +177,8 @@ public final class StrikeManager {
                 new AABB(minX, minY, minZ, minX + 16.0D, maxY, minZ + 16.0D),
                 job.x,
                 job.z,
-                job.radius
+                job.radius,
+                job.owner
         );
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
@@ -200,7 +207,8 @@ public final class StrikeManager {
             AABB area,
             double x,
             double z,
-            int radius
+            int radius,
+            UUID ownerId
     ) {
         double radiusSquared = radius * (double) radius;
         List<Entity> entities = level.getEntities(
@@ -210,7 +218,59 @@ public final class StrikeManager {
                         && !(entity instanceof Player player
                         && (player.isCreative() || player.isSpectator()))
         );
-        entities.forEach(Entity::kill);
+        ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
+        DamageSource damageSource = owner == null ? null : createStrikeDamageSource(owner);
+        for (Entity entity : entities) {
+            if (owner != null) {
+                if (entity instanceof LivingEntity livingEntity) {
+                    livingEntity.setLastHurtByPlayer(owner);
+                }
+                entity.hurt(damageSource, 1_000_000.0F);
+            }
+            if (!entity.isRemoved()) {
+                entity.kill();
+            }
+        }
+    }
+
+    private static DamageSource createStrikeDamageSource(ServerPlayer owner) {
+        DamageSource playerAttack = owner.damageSources().playerAttack(owner);
+        return new DamageSource(playerAttack.typeHolder(), owner, owner) {
+            @Override
+            public Component getLocalizedDeathMessage(LivingEntity entity) {
+                return Component.translatable(
+                        "death.attack.entropyinversion",
+                        entity.getDisplayName()
+                );
+            }
+        };
+    }
+
+    private static void warnPlayersInStrikeRadius(
+            ServerLevel level,
+            ScheduledStrike strike,
+            long gameTime
+    ) {
+        double radiusSquared = strike.radius * (double) strike.radius;
+        for (ServerPlayer player : level.players()) {
+            UUID playerId = player.getUUID();
+            if (horizontalDistanceSquared(player.position(), strike.x, strike.z) > radiusSquared) {
+                strike.nextWarningAt.remove(playerId);
+                continue;
+            }
+
+            long nextWarningAt = strike.nextWarningAt.getOrDefault(playerId, Long.MIN_VALUE);
+            if (gameTime >= nextWarningAt) {
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.translatable(
+                                "message.entropyinversion.in_strike_zone",
+                                strike.radius
+                        ),
+                        true
+                );
+                strike.nextWarningAt.put(playerId, gameTime + 20L);
+            }
+        }
     }
 
     private static double horizontalDistanceSquared(Vec3 position, double x, double z) {
@@ -235,6 +295,7 @@ public final class StrikeManager {
         private final double z;
         private final UUID owner;
         private final int radius;
+        private final Map<UUID, Long> nextWarningAt = new HashMap<>();
 
         private ScheduledStrike(long dueAt, double x, double y, double z, UUID owner, int radius) {
             this.dueAt = dueAt;
