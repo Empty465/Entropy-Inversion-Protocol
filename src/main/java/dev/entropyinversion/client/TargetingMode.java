@@ -208,6 +208,12 @@ public final class TargetingMode {
                 1.0F,
                 pulse
         );
+        drawTargetBlockOutline(
+                lines,
+                poseStack,
+                BlockPos.containing(target),
+                pulse
+        );
         drawRing(
                 lines,
                 poseStack,
@@ -253,6 +259,30 @@ public final class TargetingMode {
         }
         minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
         poseStack.popPose();
+    }
+
+    private static void drawTargetBlockOutline(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            BlockPos blockPos,
+            float pulse
+    ) {
+        double minX = blockPos.getX() - 0.004D;
+        double minY = blockPos.getY() - 0.004D;
+        double minZ = blockPos.getZ() - 0.004D;
+        double maxX = blockPos.getX() + 1.004D;
+        double maxY = blockPos.getY() + 1.004D;
+        double maxZ = blockPos.getZ() + 1.004D;
+        float cyanAlpha = 0.72F + pulse * 0.28F;
+
+        drawLine(lines, poseStack, minX, minY, minZ, maxX, minY, minZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, minX, minY, maxZ, maxX, minY, maxZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, minX, maxY, minZ, maxX, maxY, minZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, minX, maxY, maxZ, maxX, maxY, maxZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, minX, minY, minZ, minX, maxY, minZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, maxX, minY, minZ, maxX, maxY, minZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, minX, minY, maxZ, minX, maxY, maxZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
+        drawLine(lines, poseStack, maxX, minY, maxZ, maxX, maxY, maxZ, 0.18F, 0.92F, 1.0F, cyanAlpha);
     }
 
     @SubscribeEvent
@@ -419,14 +449,21 @@ public final class TargetingMode {
             target = null;
             return;
         }
-        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, false);
+        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, true);
         BlockHitResult blockHit = hit instanceof BlockHitResult block
                 && hit.getType() == HitResult.Type.BLOCK
                 ? block
                 : null;
-        target = blockHit != null
-                ? blockHit.getLocation()
-                : null;
+        if (blockHit == null) {
+            target = null;
+        } else {
+            Vec3 faceNormal = new Vec3(
+                    blockHit.getDirection().getStepX(),
+                    blockHit.getDirection().getStepY(),
+                    blockHit.getDirection().getStepZ()
+            );
+            target = blockHit.getLocation().subtract(faceNormal.scale(0.001D));
+        }
         StrikeNetwork.CHANNEL.sendToServer(
                 new LockStrikeTargetPacket(blockHit == null ? null : blockHit.getBlockPos(), target)
         );

@@ -9,6 +9,7 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.damagesource.DamageSource;
@@ -17,6 +18,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -36,6 +38,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 public final class StrikeManager {
@@ -63,7 +67,8 @@ public final class StrikeManager {
         if (requestedTarget.getY() < level.getMinBuildHeight()
                 || requestedTarget.getY() >= level.getMaxBuildHeight()
                 || ray.lengthSqr() > reachSquared
-                || ray.lengthSqr() < 0.0001D) {
+                || ray.lengthSqr() < 0.0001D
+                || !isNearRequestedBlock(requestedTarget, requestedHitLocation)) {
             LOCKED_TARGETS.remove(player.getUUID());
             return false;
         }
@@ -74,18 +79,28 @@ public final class StrikeManager {
                 eyePosition,
                 rayEnd,
                 ClipContext.Block.COLLIDER,
-                ClipContext.Fluid.NONE,
+                ClipContext.Fluid.ANY,
                 player
         ));
-        if (!(hit instanceof BlockHitResult blockHit)
-                || hit.getType() != HitResult.Type.BLOCK
-                || !blockHit.getBlockPos().equals(requestedTarget)) {
+        if (hit.getType() == HitResult.Type.BLOCK
+                && (!(hit instanceof BlockHitResult blockHit)
+                || !blockHit.getBlockPos().equals(requestedTarget))) {
             LOCKED_TARGETS.remove(player.getUUID());
             return false;
         }
 
-        LOCKED_TARGETS.put(player.getUUID(), blockHit.getLocation());
+        LOCKED_TARGETS.put(player.getUUID(), requestedHitLocation);
         return true;
+    }
+
+    private static boolean isNearRequestedBlock(BlockPos target, Vec3 hitLocation) {
+        double tolerance = 0.1D;
+        return hitLocation.x >= target.getX() - tolerance
+                && hitLocation.x <= target.getX() + 1.0D + tolerance
+                && hitLocation.y >= target.getY() - tolerance
+                && hitLocation.y <= target.getY() + 1.0D + tolerance
+                && hitLocation.z >= target.getZ() - tolerance
+                && hitLocation.z <= target.getZ() + 1.0D + tolerance;
     }
 
     public static Vec3 consumeLockedTarget(ServerPlayer player) {
@@ -199,9 +214,12 @@ public final class StrikeManager {
     private static DestructionJob createJob(ScheduledStrike strike) {
         int centerX = (int) Math.floor(strike.x);
         int centerZ = (int) Math.floor(strike.z);
-        double rimCoverageRadius = strike.radius + scorchedRimWidth(strike.radius);
+        double rimCoverageRadius = strike.radius
+                + scorchedRimWidth(strike.radius)
+                + scorchedRimJaggedness(strike.radius) * 1.4D
+                + 1.0D;
         double radiusSquared = rimCoverageRadius * rimCoverageRadius;
-        int rimChunkRadius = strike.radius + scorchedRimWidth(strike.radius);
+        int rimChunkRadius = (int) Math.ceil(rimCoverageRadius);
         int minChunkX = Math.floorDiv(centerX - rimChunkRadius, 16);
         int maxChunkX = Math.floorDiv(centerX + rimChunkRadius, 16);
         int minChunkZ = Math.floorDiv(centerZ - rimChunkRadius, 16);
@@ -272,6 +290,8 @@ public final class StrikeManager {
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         List<BlockPos> effectPositions = new ArrayList<>(DESTRUCTION_EFFECT_SAMPLE_SIZE);
+        List<BlockPos> evaporationPositions = new ArrayList<>(4);
+        int evaporatedWaterCount = 0;
         int destroyedBlockCount = 0;
         LevelChunkSection[] sections = chunk.getSections();
 
@@ -291,27 +311,54 @@ public final class StrikeManager {
                     int localX = column >> 4;
                     int localZ = column & 15;
                     pos.set(minX + localX, y, minZ + localZ);
-                    if (!section.getBlockState(localX, localY, localZ).isAir()) {
-                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
-                        destroyedBlockCount++;
-                        if (effectPositions.size() < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
-                            effectPositions.add(pos.immutable());
-                        } else if (random.nextInt(destroyedBlockCount) < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
-                            effectPositions.set(
-                                    random.nextInt(DESTRUCTION_EFFECT_SAMPLE_SIZE),
-                                    pos.immutable()
-                            );
+                    if (job.cooledPositions.contains(pos.asLong())) {
+                        continue;
+                    }
+
+                    var blockState = section.getBlockState(localX, localY, localZ);
+                    if (blockState.isAir()) {
+                        continue;
+                    }
+
+                    FluidState fluidState = blockState.getFluidState();
+                    if (fluidState.is(FluidTags.WATER)) {
+                        evaporatedWaterCount++;
+                        if (evaporationPositions.size() < 4) {
+                            evaporationPositions.add(pos.immutable());
+                        } else if (random.nextInt(evaporatedWaterCount) < 4) {
+                            evaporationPositions.set(random.nextInt(4), pos.immutable());
                         }
+                        coolAdjacentLava(level, job, pos);
+                    } else if (fluidState.is(FluidTags.LAVA)
+                            && touchesWater(level, pos)) {
+                        coolLavaBlock(level, job, pos, fluidState);
+                        continue;
+                    }
+
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
+                    destroyedBlockCount++;
+                    if (effectPositions.size() < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
+                        effectPositions.add(pos.immutable());
+                    } else if (random.nextInt(destroyedBlockCount) < DESTRUCTION_EFFECT_SAMPLE_SIZE) {
+                        effectPositions.set(
+                                random.nextInt(DESTRUCTION_EFFECT_SAMPLE_SIZE),
+                                pos.immutable()
+                        );
                     }
                 }
             }
         }
         spawnDestructionEffects(level, effectPositions);
+        spawnEvaporationEffects(level, evaporationPositions);
         spawnScorchedRim(level, job, chunkPos, random);
     }
 
     private static int scorchedRimWidth(int strikeRadius) {
         return Math.max(2, Math.min(24, (int) Math.ceil(strikeRadius * 0.12D)));
+    }
+
+    private static double scorchedRimJaggedness(int strikeRadius) {
+        return Math.max(1.0D, Math.min(8.0D, 1.0D + strikeRadius * 0.035D));
     }
 
     private static void spawnScorchedRim(
@@ -321,9 +368,11 @@ public final class StrikeManager {
             RandomSource random
     ) {
         double innerRadiusSquared = job.radius * (double) job.radius;
-        double outerRadius = job.radius + scorchedRimWidth(job.radius);
-        double outerRadiusSquared = outerRadius * outerRadius;
+        double rimWidth = scorchedRimWidth(job.radius);
+        double jaggedness = scorchedRimJaggedness(job.radius);
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        List<BlockPos> evaporationPositions = new ArrayList<>(4);
+        int evaporatedWaterCount = 0;
         int minX = chunkPos.getMinBlockX();
         int minZ = chunkPos.getMinBlockZ();
         for (int localX = 0; localX < 16; localX++) {
@@ -333,8 +382,15 @@ public final class StrikeManager {
                 double dx = x + 0.5D - job.x;
                 double dz = z + 0.5D - job.z;
                 double distanceSquared = dx * dx + dz * dz;
-                if (distanceSquared <= innerRadiusSquared || distanceSquared > outerRadiusSquared
-                        || random.nextInt(5) == 0) {
+                double distance = Math.sqrt(distanceSquared);
+                double angle = Math.atan2(dz, dx);
+                double edgeOffset = Math.sin(angle * 7.0D + 0.7D) * jaggedness
+                        + Math.sin(angle * 17.0D - 1.4D) * jaggedness * 0.38D;
+                double innerEdge = Math.max(0.0D, job.radius + edgeOffset);
+                double outerEdge = innerEdge + rimWidth
+                        * (0.82D + 0.18D * Math.sin(angle * 11.0D + 2.1D));
+                if (distanceSquared <= innerRadiusSquared || distance < innerEdge || distance > outerEdge
+                        || random.nextInt(6) == 0) {
                     continue;
                 }
 
@@ -345,6 +401,31 @@ public final class StrikeManager {
                 pos.set(x, surfaceY, z);
 
                 var surface = level.getBlockState(pos);
+                if (surface.getFluidState().is(FluidTags.WATER)) {
+                    int groundY = level.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z) - 1;
+                    if (groundY < level.getMinBuildHeight()) {
+                        continue;
+                    }
+                    for (int offset = 1; offset <= 5; offset++) {
+                        int waterY = groundY + offset;
+                        if (waterY >= level.getMaxBuildHeight()) {
+                            break;
+                        }
+                        pos.set(x, waterY, z);
+                        if (!level.getFluidState(pos).is(FluidTags.WATER)) {
+                            break;
+                        }
+                        evaporatedWaterCount++;
+                        if (evaporationPositions.size() < 4) {
+                            evaporationPositions.add(pos.immutable());
+                        } else if (random.nextInt(evaporatedWaterCount) < 4) {
+                            evaporationPositions.set(random.nextInt(4), pos.immutable());
+                        }
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                    }
+                    pos.set(x, groundY, z);
+                    surface = level.getBlockState(pos);
+                }
                 if (!surface.isFaceSturdy(level, pos, Direction.UP)
                         || !surface.getFluidState().isEmpty()
                         || surface.getDestroySpeed(level, pos) < 0.0F) {
@@ -356,6 +437,58 @@ public final class StrikeManager {
                         : random.nextBoolean() ? Blocks.BLACKSTONE : Blocks.BASALT;
                 level.setBlock(pos, scarBlock.defaultBlockState(), 3);
             }
+        }
+        spawnEvaporationEffects(level, evaporationPositions);
+    }
+
+    private static void coolAdjacentLava(ServerLevel level, DestructionJob job, BlockPos waterPos) {
+        BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            neighbor.setWithOffset(waterPos, direction);
+            double dx = neighbor.getX() + 0.5D - job.x;
+            double dz = neighbor.getZ() + 0.5D - job.z;
+            if (dx * dx + dz * dz > job.radius * (double) job.radius) {
+                continue;
+            }
+            FluidState lava = level.getFluidState(neighbor);
+            if (lava.is(FluidTags.LAVA)) {
+                coolLavaBlock(level, job, neighbor, lava);
+            }
+        }
+    }
+
+    private static boolean touchesWater(ServerLevel level, BlockPos pos) {
+        BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
+        for (Direction direction : Direction.values()) {
+            neighbor.setWithOffset(pos, direction);
+            if (level.getFluidState(neighbor).is(FluidTags.WATER)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void coolLavaBlock(
+            ServerLevel level,
+            DestructionJob job,
+            BlockPos pos,
+            FluidState lava
+    ) {
+        job.cooledPositions.add(pos.asLong());
+        level.setBlock(
+                pos,
+                (lava.isSource() ? Blocks.OBSIDIAN : Blocks.COBBLESTONE).defaultBlockState(),
+                3
+        );
+    }
+
+    private static void spawnEvaporationEffects(ServerLevel level, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            double x = pos.getX() + 0.5D;
+            double y = pos.getY() + 0.4D;
+            double z = pos.getZ() + 0.5D;
+            level.sendParticles(ParticleTypes.CLOUD, x, y, z, 8, 0.45D, 0.5D, 0.45D, 0.025D);
+            level.sendParticles(ParticleTypes.LARGE_SMOKE, x, y, z, 5, 0.35D, 0.3D, 0.35D, 0.015D);
         }
     }
 
@@ -512,6 +645,7 @@ public final class StrikeManager {
         private final double x;
         private final double z;
         private final int radius;
+        private final Set<Long> cooledPositions = new HashSet<>();
 
         private DestructionJob(
                 ArrayDeque<ChunkPos> chunks,
