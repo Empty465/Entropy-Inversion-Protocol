@@ -4,6 +4,8 @@
 
 **Entropy Inversion Protocol** is a Minecraft Forge 1.20.1 mod.
 
+> This project was vibe-coded with the assistance of AI.
+
 Strike a designated position with an advanced weapon from beyond the galaxy, erasing terrain and entities in the surrounding area.
 
 > [!CAUTION]
@@ -55,6 +57,8 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 # 엔트로피 역전 프로토콜
 
 **Entropy Inversion Protocol**은 Minecraft Forge 1.20.1용 모드입니다.
+
+> 이 프로젝트는 AI의 도움을 받아 바이브 코딩으로 개발되었습니다.
 
 은하 너머의 오버테크놀로지 무기로 지정한 좌표를 타격하고, 그 주변의 지형과 엔티티를 소멸시킵니다.
 

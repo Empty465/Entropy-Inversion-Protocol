@@ -270,3 +270,8 @@
 
 - GitHub README에서 YouTube iframe 플레이어는 지원되지 않으므로, 상단 영상 링크를 클릭 가능한 YouTube 썸네일로 바꿨습니다.
 - 검증: Markdown 링크 구문과 `git diff --check`를 확인했습니다.
+
+### README AI 바이브 코딩 표기
+
+- 영어와 한국어 소개문에 AI 도움을 받아 바이브 코딩으로 개발한 프로젝트임을 명시했습니다.
+- 검증: 문서 변경 후 `git diff --check`를 확인했습니다.
