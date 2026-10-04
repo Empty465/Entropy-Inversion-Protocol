@@ -43,7 +43,7 @@ public final class StrikeManager {
         if (player instanceof ServerPlayer serverPlayer) {
             StrikeNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> serverPlayer),
-                    new StrikeCutscenePacket(target.x, target.z, CUTSCENE_TICKS)
+                    new StrikeCutscenePacket(target.x, target.z, CUTSCENE_TICKS, radius)
             );
         }
     }
@@ -103,6 +103,14 @@ public final class StrikeManager {
                 strike.z + radius + 1.0D
         );
         removeEntities(level, area, strike.x, strike.z, strike.radius);
+        level.playSound(
+                null,
+                BlockPos.containing(strike.x, strike.y, strike.z),
+                net.minecraft.sounds.SoundEvents.GENERIC_EXPLODE,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                5.0F,
+                0.65F
+        );
         level.playSound(
                 null,
                 BlockPos.containing(strike.x, strike.y, strike.z),

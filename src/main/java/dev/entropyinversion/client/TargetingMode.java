@@ -7,9 +7,12 @@ import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import dev.entropyinversion.network.RequestStrikePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.BlockHitResult;
@@ -33,6 +36,9 @@ import org.lwjgl.glfw.GLFW;
 public final class TargetingMode {
     private static final int HOLD_TO_CONFIRM_TICKS = 20;
     private static final int CIRCLE_SEGMENTS = 128;
+    private static final int DEFAULT_RADIUS_SCROLL_STEP = 5;
+    private static final int PRECISE_RADIUS_SCROLL_STEP = 1;
+    private static final int PREVIEW_MAX_RADIUS = 42;
     private static boolean active;
     private static boolean leftButtonDown;
     private static int holdTicks;
@@ -50,8 +56,10 @@ public final class TargetingMode {
         active = true;
         leftButtonDown = false;
         holdTicks = 0;
-        strikeRadius = EntropyInversionRequestorItem.DEFAULT_STRIKE_RADIUS;
         updateTarget(minecraft.player);
+        minecraft.getSoundManager().play(
+                SimpleSoundInstance.forUI(SoundEvents.BEACON_ACTIVATE, 0.65F, 1.25F)
+        );
     }
 
     @SubscribeEvent
@@ -63,14 +71,35 @@ public final class TargetingMode {
         event.setCanceled(true);
         double scrollDelta = event.getScrollDelta();
         if (scrollDelta != 0.0D) {
-            strikeRadius = Math.max(
+            int wheelNotches = Math.max(1, (int) Math.round(Math.abs(scrollDelta)));
+            int step = isAltDown()
+                    ? PRECISE_RADIUS_SCROLL_STEP
+                    : DEFAULT_RADIUS_SCROLL_STEP;
+            long radiusChange = (long) wheelNotches * step * (long) Math.signum(scrollDelta);
+            int updatedRadius = (int) Math.max(
                     EntropyInversionRequestorItem.MIN_STRIKE_RADIUS,
                     Math.min(
                             EntropyInversionRequestorItem.MAX_STRIKE_RADIUS,
-                            strikeRadius + (int) Math.signum(scrollDelta)
+                            strikeRadius + radiusChange
                     )
             );
+            if (updatedRadius != strikeRadius) {
+                strikeRadius = updatedRadius;
+                Minecraft.getInstance().getSoundManager().play(
+                        SimpleSoundInstance.forUI(
+                                SoundEvents.UI_BUTTON_CLICK.get(),
+                                0.35F,
+                                isAltDown() ? 1.65F : 1.2F
+                        )
+                );
+            }
         }
+    }
+
+    private static boolean isAltDown() {
+        long window = Minecraft.getInstance().getWindow().getWindow();
+        return GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_ALT) == GLFW.GLFW_PRESS
+                || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_ALT) == GLFW.GLFW_PRESS;
     }
 
     @SubscribeEvent
@@ -119,6 +148,7 @@ public final class TargetingMode {
         }
 
         updateTarget(player);
+        spawnTargetingParticles(minecraft);
         if (leftButtonDown) {
             holdTicks++;
             if (holdTicks >= HOLD_TO_CONFIRM_TICKS) {
@@ -156,6 +186,7 @@ public final class TargetingMode {
         int bottomY = minecraft.level.getMinBuildHeight();
         int topY = minecraft.level.getMaxBuildHeight();
         int targetY = BlockPos.containing(target).getY();
+        float pulse = 0.72F + 0.22F * (float) Math.sin(minecraft.level.getGameTime() * 0.18D);
 
         drawRing(
                 lines,
@@ -164,10 +195,10 @@ public final class TargetingMode {
                 target.z,
                 targetY + 0.08D,
                 strikeRadius,
-                0.1F,
-                0.98F,
+                0.18F,
+                0.92F,
                 1.0F,
-                1.0F
+                pulse
         );
         drawRing(
                 lines,
@@ -271,18 +302,27 @@ public final class TargetingMode {
             );
         }
 
-        drawRadiusPreview(event, width - 62, height / 2 - 30);
+        drawRadiusPreview(event, width, height);
     }
 
-    private static void drawRadiusPreview(RenderGuiOverlayEvent.Post event, int centerX, int centerY) {
-        int radius = 34;
-        int panelLeft = centerX - 49;
-        int panelTop = centerY - 58;
+    private static void drawRadiusPreview(RenderGuiOverlayEvent.Post event, int width, int height) {
+        int panelWidth = 132;
+        int panelRight = width - 12;
+        int panelBottom = height - 12;
+        int radius = Math.max(
+                3,
+                strikeRadius * PREVIEW_MAX_RADIUS
+                        / EntropyInversionRequestorItem.MAX_STRIKE_RADIUS
+        );
+        int panelLeft = panelRight - panelWidth;
+        int panelTop = panelBottom - (radius * 2 + 72);
+        int centerX = panelLeft + panelWidth / 2;
+        int centerY = panelTop + 18 + radius;
         event.getGuiGraphics().fill(
                 panelLeft,
                 panelTop,
-                panelLeft + 98,
-                panelTop + 136,
+                panelRight,
+                panelBottom,
                 0xD9081522
         );
         event.getGuiGraphics().drawCenteredString(
@@ -317,21 +357,21 @@ public final class TargetingMode {
                         strikeRadius
                 ),
                 centerX,
-                centerY + radius + 12,
+                centerY + radius + 11,
                 0xFFFFFFFF
         );
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
                 Component.translatable("gui.entropyinversion.targeting.height"),
                 centerX,
-                centerY + radius + 23,
+                centerY + radius + 22,
                 0xFFB7C9D8
         );
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
                 Component.translatable("gui.entropyinversion.targeting.radius_control"),
                 centerX,
-                centerY + radius + 35,
+                centerY + radius + 33,
                 0xFFFFD27A
         );
     }
@@ -365,6 +405,34 @@ public final class TargetingMode {
                 && hit.getType() == HitResult.Type.BLOCK
                 ? blockHit.getLocation()
                 : null;
+    }
+
+    private static void spawnTargetingParticles(Minecraft minecraft) {
+        if (target == null || minecraft.level == null || (minecraft.level.getGameTime() & 3L) != 0L) {
+            return;
+        }
+
+        double time = minecraft.level.getGameTime() * 0.12D;
+        double boundaryX = target.x + Math.cos(time) * strikeRadius;
+        double boundaryZ = target.z + Math.sin(time) * strikeRadius;
+        minecraft.level.addParticle(
+                ParticleTypes.END_ROD,
+                target.x,
+                target.y + 0.2D,
+                target.z,
+                0.0D,
+                0.035D,
+                0.0D
+        );
+        minecraft.level.addParticle(
+                ParticleTypes.PORTAL,
+                boundaryX,
+                target.y + 0.1D,
+                boundaryZ,
+                0.0D,
+                0.015D,
+                0.0D
+        );
     }
 
     private static boolean hasRequestor(Player player) {

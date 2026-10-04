@@ -15,8 +15,11 @@
   "gui.entropyinversion.targeting.hold": "Hold left-click to confirm · Right-click or Esc to cancel",
   "gui.entropyinversion.targeting.radius": "STRIKE ZONE",
   "gui.entropyinversion.targeting.radius_value": "RADIUS %1$s",
-  "gui.entropyinversion.targeting.radius_control": "Scroll to adjust",
+  "gui.entropyinversion.targeting.radius_control": "Scroll: 5 · Alt+scroll: 1",
   "gui.entropyinversion.targeting.height": "WORLD HEIGHT",
-  "gui.entropyinversion.cutscene.title": "ENTROPY INVERSION WEAPON INBOUND",
+  "gui.entropyinversion.cutscene.space": "BEYOND THE GALAXY · WEAPON DEPLOYED",
+  "gui.entropyinversion.cutscene.transition": "ATMOSPHERIC ENTRY · TARGET LOCKED",
+  "gui.entropyinversion.cutscene.impact": "OVERWORLD · STRIKE IN PROGRESS",
+  "gui.entropyinversion.cutscene.detonation": "ENTROPY INVERSION · SHOCKWAVE",
   "gui.entropyinversion.cutscene.target": "TARGET  %1$s, %2$s"
 }
