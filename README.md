@@ -1,3 +1,5 @@
+[![Watch the YouTube showcase](https://img.youtube.com/vi/IuH9Ax2z_fE/hqdefault.jpg)](https://youtu.be/IuH9Ax2z_fE)
+
 # Entropy Inversion Protocol
 
 **Entropy Inversion Protocol** is a Minecraft Forge 1.20.1 mod.
