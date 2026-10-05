@@ -162,8 +162,13 @@ public final class StrikeManager {
 
         for (int i = 0; i < CHUNKS_PER_TICK && !state.jobs.isEmpty(); i++) {
             DestructionJob job = state.jobs.peek();
-            destroyChunk(level, job, job.chunks.remove());
-            if (job.chunks.isEmpty()) {
+            if (!job.chunks.isEmpty()) {
+                destroyChunk(level, job, job.chunks.remove());
+            } else if (!job.waterCleanupChunks.isEmpty()) {
+                clearWaterInChunk(level, job, job.waterCleanupChunks.remove());
+            }
+
+            if (job.chunks.isEmpty() && job.waterCleanupChunks.isEmpty()) {
                 state.jobs.remove();
                 Player owner = level.getPlayerByUUID(job.owner);
                 if (owner != null) {
@@ -245,8 +250,26 @@ public final class StrikeManager {
             double dz = pos.getMinBlockZ() + 8.0D - strike.z;
             return dx * dx + dz * dz;
         }));
+        List<ChunkPos> waterCleanupChunks = new ArrayList<>();
+        for (ChunkPos chunk : chunks) {
+            int minX = chunk.getMinBlockX();
+            int minZ = chunk.getMinBlockZ();
+            double nearestX = clamp(strike.x, minX, minX + 15);
+            double nearestZ = clamp(strike.z, minZ, minZ + 15);
+            double dx = nearestX - strike.x;
+            double dz = nearestZ - strike.z;
+            if (dx * dx + dz * dz <= strike.radius * (double) strike.radius) {
+                waterCleanupChunks.add(chunk);
+            }
+        }
+        waterCleanupChunks.sort(Comparator.comparingDouble((ChunkPos pos) -> {
+            double dx = pos.getMinBlockX() + 8.0D - strike.x;
+            double dz = pos.getMinBlockZ() + 8.0D - strike.z;
+            return dx * dx + dz * dz;
+        }).reversed());
         return new DestructionJob(
                 new ArrayDeque<>(chunks),
+                new ArrayDeque<>(waterCleanupChunks),
                 strike.owner,
                 strike.x,
                 strike.z,
@@ -353,6 +376,67 @@ public final class StrikeManager {
         spawnScorchedRim(level, job, chunkPos, random);
     }
 
+    private static void clearWaterInChunk(ServerLevel level, DestructionJob job, ChunkPos chunkPos) {
+        LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int minY = level.getMinBuildHeight();
+        int maxY = level.getMaxBuildHeight();
+        int[] columns = new int[256];
+        int columnCount = 0;
+        double radiusSquared = job.radius * (double) job.radius;
+        for (int localX = 0; localX < 16; localX++) {
+            int x = minX + localX;
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int z = minZ + localZ;
+                double dx = x + 0.5D - job.x;
+                double dz = z + 0.5D - job.z;
+                if (dx * dx + dz * dz <= radiusSquared) {
+                    columns[columnCount++] = (localX << 4) | localZ;
+                }
+            }
+        }
+        if (columnCount == 0) {
+            return;
+        }
+
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        List<BlockPos> evaporationPositions = new ArrayList<>(4);
+        RandomSource random = level.getRandom();
+        int evaporatedWaterCount = 0;
+        LevelChunkSection[] sections = chunk.getSections();
+        for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+            LevelChunkSection section = sections[sectionIndex];
+            if (section.hasOnlyAir()) {
+                continue;
+            }
+
+            int sectionMinY = minY + sectionIndex * 16;
+            int firstLocalY = Math.max(0, minY - sectionMinY);
+            int lastLocalY = Math.min(16, maxY - sectionMinY);
+            for (int localY = firstLocalY; localY < lastLocalY; localY++) {
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int column = columns[columnIndex];
+                    int localX = column >> 4;
+                    int localZ = column & 15;
+                    if (!section.getBlockState(localX, localY, localZ).getFluidState().is(FluidTags.WATER)) {
+                        continue;
+                    }
+
+                    pos.set(minX + localX, sectionMinY + localY, minZ + localZ);
+                    evaporatedWaterCount++;
+                    if (evaporationPositions.size() < 4) {
+                        evaporationPositions.add(pos.immutable());
+                    } else if (random.nextInt(evaporatedWaterCount) < evaporationPositions.size()) {
+                        evaporationPositions.set(random.nextInt(evaporationPositions.size()), pos.immutable());
+                    }
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                }
+            }
+        }
+        spawnEvaporationEffects(level, evaporationPositions);
+    }
+
     private static int scorchedRimWidth(int strikeRadius) {
         return Math.max(2, Math.min(24, (int) Math.ceil(strikeRadius * 0.12D)));
     }
@@ -367,7 +451,6 @@ public final class StrikeManager {
             ChunkPos chunkPos,
             RandomSource random
     ) {
-        double innerRadiusSquared = job.radius * (double) job.radius;
         double rimWidth = scorchedRimWidth(job.radius);
         double jaggedness = scorchedRimJaggedness(job.radius);
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
@@ -389,8 +472,7 @@ public final class StrikeManager {
                 double innerEdge = Math.max(0.0D, job.radius + edgeOffset);
                 double outerEdge = innerEdge + rimWidth
                         * (0.82D + 0.18D * Math.sin(angle * 11.0D + 2.1D));
-                if (distanceSquared <= innerRadiusSquared || distance < innerEdge || distance > outerEdge
-                        || random.nextInt(6) == 0) {
+                if (distance <= job.radius || distance < innerEdge || distance > outerEdge) {
                     continue;
                 }
 
@@ -399,7 +481,6 @@ public final class StrikeManager {
                     continue;
                 }
                 pos.set(x, surfaceY, z);
-
                 var surface = level.getBlockState(pos);
                 if (surface.getFluidState().is(FluidTags.WATER)) {
                     int groundY = level.getHeight(Heightmap.Types.OCEAN_FLOOR, x, z) - 1;
@@ -425,6 +506,20 @@ public final class StrikeManager {
                     }
                     pos.set(x, groundY, z);
                     surface = level.getBlockState(pos);
+                }
+                if (!surface.isFaceSturdy(level, pos, Direction.UP)) {
+                    int searchLimit = Math.max(level.getMinBuildHeight(), pos.getY() - 3);
+                    while (pos.getY() > searchLimit) {
+                        pos.move(Direction.DOWN);
+                        surface = level.getBlockState(pos);
+                        if (surface.getFluidState().is(FluidTags.WATER)
+                                || surface.getFluidState().is(FluidTags.LAVA)) {
+                            break;
+                        }
+                        if (surface.isFaceSturdy(level, pos, Direction.UP)) {
+                            break;
+                        }
+                    }
                 }
                 if (!surface.isFaceSturdy(level, pos, Direction.UP)
                         || !surface.getFluidState().isEmpty()
@@ -641,6 +736,7 @@ public final class StrikeManager {
 
     private static final class DestructionJob {
         private final ArrayDeque<ChunkPos> chunks;
+        private final ArrayDeque<ChunkPos> waterCleanupChunks;
         private final UUID owner;
         private final double x;
         private final double z;
@@ -649,12 +745,14 @@ public final class StrikeManager {
 
         private DestructionJob(
                 ArrayDeque<ChunkPos> chunks,
+                ArrayDeque<ChunkPos> waterCleanupChunks,
                 UUID owner,
                 double x,
                 double z,
                 int radius
         ) {
             this.chunks = chunks;
+            this.waterCleanupChunks = waterCleanupChunks;
             this.owner = owner;
             this.x = x;
             this.z = z;
