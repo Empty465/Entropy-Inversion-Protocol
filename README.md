@@ -40,6 +40,7 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 - After a 10-second cutscene, blocks and living entities are erased within a cylindrical column centered on the target.
 - Water inside the strike area is cleared again after block removal to eliminate fluid that flows back while chunks are being processed.
 - An irregular scorched zone remains outside the strike area. Its width scales with the radius and includes a mix of magma blocks, blackstone, and basalt placed along the existing surface.
+- The Requestor has a custom 3D radio-style model with an antenna, tuning dials, speaker grille, and illuminated display.
 - Entities killed by the strike are credited to the player who requested it.
 
 ## Behavior and Limitations
@@ -96,6 +97,7 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 - 청크별 파괴 처리 중 범위 안으로 다시 흘러든 물이 남지 않도록, 블록 파괴 후 타격 범위의 물을 한 번 더 정리합니다.
 - 타격 범위의 바깥에는 반경에 비례해 폭이 넓고 가장자리가 불규칙하게 튀어나온 그을린 지대가 남습니다. 마그마 블록, 흑암과 현무암이 기존 지표를 따라 섞여 생성됩니다.
 - 타격으로 사망한 생명체는 요청 플레이어의 공격으로 처리됩니다.
+- 요청기는 안테나, 조절 다이얼, 스피커 그릴과 발광 화면이 있는 무전기 형태의 3D 모델을 사용합니다.
 
 ## 동작 및 제한
 
@@ -106,5 +108,4 @@ The mouse wheel does not change hotbar slots while targeting. The initial radius
 
 ## 향후 계획
 
-- 요청기 텍스쳐 개선 또는 3D 모델링 적용
 - 요청기로 다른 형태의 공격 추가 (블록 파괴없이 범위 내 생명체만 즉사, 주변 소행성을 유도하여 폭격 등)
