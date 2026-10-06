@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.item.AttackMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BeaconRenderer;
@@ -47,6 +48,7 @@ public final class CutsceneOverlay {
     private static long lastShockwaveParticleTick = Long.MIN_VALUE;
     private static int duration;
     private static int strikeRadius;
+    private static AttackMode attackMode = AttackMode.ENTROPY_INVERSION;
     private static int soundStage;
     private static boolean impactBurstSpawned;
     private static double targetX;
@@ -57,7 +59,14 @@ public final class CutsceneOverlay {
     private CutsceneOverlay() {
     }
 
-    public static void begin(double x, double y, double z, int ticks, int radius) {
+    public static void begin(
+            double x,
+            double y,
+            double z,
+            int ticks,
+            int radius,
+            AttackMode mode
+    ) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) {
             return;
@@ -70,6 +79,7 @@ public final class CutsceneOverlay {
                 EntropyInversionRequestorItem.MIN_STRIKE_RADIUS,
                 Math.min(EntropyInversionRequestorItem.MAX_STRIKE_RADIUS, radius)
         );
+        attackMode = mode;
         startedAt = minecraft.level.getGameTime();
         lastChargeParticleTick = Long.MIN_VALUE;
         lastShockwaveParticleTick = Long.MIN_VALUE;
@@ -936,6 +946,22 @@ public final class CutsceneOverlay {
     }
 
     private static String getStageKey(float progress) {
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            if (progress < IMPACT_SCENE_START) {
+                return "gui.entropyinversion.cutscene.asteroid_approach";
+            }
+            return progress < IMPACT_BEAM_END
+                    ? "gui.entropyinversion.cutscene.asteroid.impact"
+                    : "gui.entropyinversion.cutscene.asteroid.crater";
+        }
+        if (attackMode == AttackMode.ANTI_ORGANIC_MICROBOTS) {
+            if (progress < IMPACT_SCENE_START) {
+                return "gui.entropyinversion.cutscene.microbots.deploy";
+            }
+            return progress < IMPACT_BEAM_END
+                    ? "gui.entropyinversion.cutscene.microbots.sweep"
+                    : "gui.entropyinversion.cutscene.microbots.terminate";
+        }
         if (progress < 0.18F) {
             return "gui.entropyinversion.cutscene.space";
         }

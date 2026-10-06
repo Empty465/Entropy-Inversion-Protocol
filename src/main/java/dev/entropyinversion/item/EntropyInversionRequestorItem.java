@@ -1,6 +1,7 @@
 package dev.entropyinversion.item;
 
 import dev.entropyinversion.client.TargetingMode;
+import dev.entropyinversion.client.AttackModeSelectionScreen;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.TextColor;
@@ -44,6 +45,12 @@ public final class EntropyInversionRequestorItem extends Item {
                 .withStyle(ChatFormatting.RED));
         tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.confirm")
                 .withStyle(ChatFormatting.YELLOW));
+        AttackMode mode = AttackMode.fromStack(stack);
+        tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.mode",
+                        Component.translatable(mode.getNameKey()))
+                .withStyle(ChatFormatting.LIGHT_PURPLE));
+        tooltip.add(Component.translatable("item.entropyinversion.entropy_inversion_requestor.mode_select")
+                .withStyle(ChatFormatting.GRAY));
     }
 
     @Override
@@ -54,7 +61,15 @@ public final class EntropyInversionRequestorItem extends Item {
     ) {
         ItemStack stack = player.getItemInHand(hand);
         if (level.isClientSide) {
-            DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> TargetingMode::start);
+            if (player.isShiftKeyDown()) {
+                DistExecutor.unsafeRunWhenOn(
+                        Dist.CLIENT,
+                        () -> () -> net.minecraft.client.Minecraft.getInstance()
+                                .setScreen(new AttackModeSelectionScreen(hand))
+                );
+            } else {
+                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TargetingMode.start(hand));
+            }
             return InteractionResultHolder.success(stack);
         }
         return InteractionResultHolder.sidedSuccess(stack, false);

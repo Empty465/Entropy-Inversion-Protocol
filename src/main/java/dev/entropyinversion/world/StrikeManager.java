@@ -1,6 +1,8 @@
 package dev.entropyinversion.world;
 
+import dev.entropyinversion.AsteroidDimensions;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.item.AttackMode;
 import dev.entropyinversion.network.StrikeCutscenePacket;
 import dev.entropyinversion.network.StrikeNetwork;
 import net.minecraft.core.BlockPos;
@@ -15,7 +17,10 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.material.FluidState;
@@ -38,13 +43,20 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
 public final class StrikeManager {
     private static final int CUTSCENE_TICKS = 200;
+    private static final int ASTEROID_CUTSCENE_TICKS = 260;
+    private static final int ASTEROID_FLIGHT_TICKS = 150;
+    private static final int ASTEROID_SPAWN_HEIGHT = 120;
+    private static final int MICROBOT_REVEAL_TICKS = 160;
+    private static final int MICROBOT_PARTICLE_INTERVAL_TICKS = 5;
     private static final int CHUNKS_PER_TICK = 4;
+    private static final int ASTEROID_CHUNKS_PER_TICK = 16;
     private static final int DESTRUCTION_EFFECT_SAMPLE_SIZE = 4;
     private static final Map<ServerLevel, LevelState> LEVEL_STATES = new HashMap<>();
     private static final Map<UUID, Vec3> LOCKED_TARGETS = new HashMap<>();
@@ -116,23 +128,48 @@ public final class StrikeManager {
         LOCKED_TARGETS.remove(event.getEntity().getUUID());
     }
 
-    public static void schedule(ServerLevel level, Vec3 target, UUID owner, int radius) {
+    public static void schedule(
+            ServerLevel level,
+            Vec3 target,
+            UUID owner,
+            int radius,
+            AttackMode attackMode
+    ) {
         LevelState state = LEVEL_STATES.computeIfAbsent(level, ignored -> new LevelState());
+        int cutsceneTicks = attackMode == AttackMode.ASTEROID_BOMBARDMENT
+                ? ASTEROID_CUTSCENE_TICKS
+                : CUTSCENE_TICKS;
         ScheduledStrike strike = new ScheduledStrike(
-                level.getGameTime() + CUTSCENE_TICKS,
+                level.getGameTime() + cutsceneTicks,
                 target.x,
                 target.y,
                 target.z,
                 owner,
-                radius
+                radius,
+                attackMode,
+                cutsceneTicks
         );
         state.scheduled.add(strike);
         warnPlayersInStrikeRadius(level, strike, level.getGameTime());
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            AsteroidFlight asteroid = summonAsteroid(level, strike);
+            state.asteroids.put(
+                    asteroid.centerEntity.getUUID(),
+                    asteroid
+            );
+        }
         Player player = level.getPlayerByUUID(owner);
         if (player instanceof ServerPlayer serverPlayer) {
             StrikeNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> serverPlayer),
-                    new StrikeCutscenePacket(target.x, target.y, target.z, CUTSCENE_TICKS, radius)
+                    new StrikeCutscenePacket(
+                            target.x,
+                            target.y,
+                            target.z,
+                            cutsceneTicks,
+                            radius,
+                            attackMode
+                    )
             );
         }
     }
@@ -153,38 +190,141 @@ public final class StrikeManager {
         while (strikes.hasNext()) {
             ScheduledStrike strike = strikes.next();
             warnPlayersInStrikeRadius(level, strike, gameTime);
+            if (strike.attackMode == AttackMode.ANTI_ORGANIC_MICROBOTS
+                    && !strike.microbotsRevealed
+                    && strike.dueAt - gameTime <= MICROBOT_REVEAL_TICKS) {
+                revealMicrobotTargets(level, strike);
+            }
+            if (strike.attackMode == AttackMode.ANTI_ORGANIC_MICROBOTS
+                    && strike.microbotsRevealed
+                    && strike.dueAt > gameTime
+                    && gameTime % MICROBOT_PARTICLE_INTERVAL_TICKS == 0L) {
+                emitMicrobotTargetParticles(level, strike);
+            }
             if (strike.dueAt <= gameTime) {
                 strikes.remove();
-                impact(level, strike);
-                state.jobs.add(createJob(strike));
+                switch (strike.attackMode) {
+                    case ENTROPY_INVERSION -> {
+                        impact(level, strike);
+                        state.jobs.add(createJob(strike));
+                    }
+                    case ASTEROID_BOMBARDMENT -> {
+                    }
+                    case ANTI_ORGANIC_MICROBOTS -> {
+                        impactMicrobots(level, strike);
+                    }
+                }
             }
         }
 
-        for (int i = 0; i < CHUNKS_PER_TICK && !state.jobs.isEmpty(); i++) {
+        int chunkBudget = !state.jobs.isEmpty()
+                && state.jobs.peek().attackMode == AttackMode.ASTEROID_BOMBARDMENT
+                ? ASTEROID_CHUNKS_PER_TICK
+                : CHUNKS_PER_TICK;
+        for (int i = 0; i < chunkBudget && !state.jobs.isEmpty(); i++) {
             DestructionJob job = state.jobs.peek();
             if (!job.chunks.isEmpty()) {
-                destroyChunk(level, job, job.chunks.remove());
+                ChunkPos chunk = job.chunks.remove();
+                if (job.attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+                    carveAsteroidChunk(level, job, chunk);
+                } else {
+                    destroyChunk(level, job, chunk);
+                }
             } else if (!job.waterCleanupChunks.isEmpty()) {
                 clearWaterInChunk(level, job, job.waterCleanupChunks.remove());
             }
 
             if (job.chunks.isEmpty() && job.waterCleanupChunks.isEmpty()) {
                 state.jobs.remove();
+                if (job.attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+                    leaveAsteroidCore(level, job);
+                }
                 Player owner = level.getPlayerByUUID(job.owner);
                 if (owner != null) {
-                    owner.displayClientMessage(
-                            net.minecraft.network.chat.Component.translatable(
-                                    "message.entropyinversion.complete"
-                            ),
-                            true
-                    );
+                    Component completion = switch (job.attackMode) {
+                        case ASTEROID_BOMBARDMENT -> Component.translatable(
+                                "message.entropyinversion.asteroid_complete"
+                        );
+                        default -> Component.translatable("message.entropyinversion.complete");
+                    };
+                    owner.displayClientMessage(completion, true);
                 }
             }
         }
 
-        if (state.scheduled.isEmpty() && state.jobs.isEmpty()) {
+        for (AsteroidFlight flight : new ArrayList<>(state.asteroids.values())) {
+            FallingBlockEntity asteroid = flight.centerEntity;
+            int elapsedTicks = (int) (gameTime - flight.startedAt);
+            if (elapsedTicks >= ASTEROID_FLIGHT_TICKS || asteroid.isRemoved()) {
+                setAsteroidClusterPosition(flight, flight.impactY + 0.25D);
+                resolveAsteroidImpact(level, state, flight);
+                flight.impacted = true;
+            } else if (!flight.impacted) {
+                double[] flightState = asteroidFlightState(flight, elapsedTicks);
+                setAsteroidClusterPosition(flight, flightState[0], flightState[1]);
+                level.sendParticles(
+                        ParticleTypes.FLAME,
+                        asteroid.getX(),
+                        asteroid.getY(),
+                        asteroid.getZ(),
+                        4,
+                        0.65D,
+                        0.65D,
+                        0.65D,
+                        0.01D
+                );
+                level.sendParticles(
+                        ParticleTypes.LARGE_SMOKE,
+                        asteroid.getX(),
+                        asteroid.getY(),
+                        asteroid.getZ(),
+                        2,
+                        0.4D,
+                        0.4D,
+                        0.4D,
+                        0.004D
+                );
+            }
+        }
+        state.asteroids.values().removeIf(flight -> flight.impacted);
+
+        if (state.scheduled.isEmpty() && state.jobs.isEmpty() && state.asteroids.isEmpty()) {
             LEVEL_STATES.remove(level);
         }
+    }
+
+    private static int getAsteroidImpactY(ServerLevel level, ScheduledStrike strike) {
+        int blockX = BlockPos.containing(strike.x, strike.y, strike.z).getX();
+        int blockZ = BlockPos.containing(strike.x, strike.y, strike.z).getZ();
+        return Math.max(
+                level.getMinBuildHeight(),
+                level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, blockX, blockZ) - 1
+        );
+    }
+
+    private static void resolveAsteroidImpact(
+            ServerLevel level,
+            LevelState state,
+            AsteroidFlight flight
+    ) {
+        for (FallingBlockEntity piece : flight.entities) {
+            piece.discard();
+        }
+        for (long chunkKey : flight.forcedChunks) {
+            level.setChunkForced((int) chunkKey, (int) (chunkKey >> 32), false);
+        }
+        ScheduledStrike strike = new ScheduledStrike(
+                level.getGameTime(),
+                flight.strike.x,
+                flight.impactY,
+                flight.strike.z,
+                flight.strike.owner,
+                flight.strike.radius,
+                AttackMode.ASTEROID_BOMBARDMENT,
+                flight.strike.cutsceneTicks
+        );
+        impactAsteroid(level, strike);
+        state.jobs.add(createAsteroidJob(strike, flight.impactY));
     }
 
     private static void impact(ServerLevel level, ScheduledStrike strike) {
@@ -197,7 +337,15 @@ public final class StrikeManager {
                 level.getMaxBuildHeight(),
                 strike.z + radius + 1.0D
         );
-        removeEntities(level, area, strike.x, strike.z, strike.radius, strike.owner);
+        removeEntities(
+                level,
+                area,
+                strike.x,
+                strike.z,
+                strike.radius,
+                strike.owner,
+                AttackMode.ENTROPY_INVERSION
+        );
         level.playSound(
                 null,
                 BlockPos.containing(strike.x, strike.y, strike.z),
@@ -214,6 +362,440 @@ public final class StrikeManager {
                 8.0F,
                 0.65F
         );
+    }
+
+    private static AsteroidFlight summonAsteroid(ServerLevel level, ScheduledStrike strike) {
+        int x = BlockPos.containing(strike.x, strike.y, strike.z).getX();
+        int z = BlockPos.containing(strike.x, strike.y, strike.z).getZ();
+        int impactY = getAsteroidImpactY(level, strike);
+        int spawnY = Math.min(level.getMaxBuildHeight() - 2, impactY + ASTEROID_SPAWN_HEIGHT);
+        int halfSize = AsteroidDimensions.halfSizeForRadius(strike.radius);
+        List<BlockPos> offsets = new ArrayList<>();
+        List<FallingBlockEntity> pieces = new ArrayList<>();
+        FallingBlockEntity centerEntity = null;
+        Set<Long> forcedChunks = new HashSet<>();
+        for (int yOffset = -halfSize; yOffset <= halfSize; yOffset++) {
+            for (int xOffset = -halfSize; xOffset <= halfSize; xOffset++) {
+                for (int zOffset = -halfSize; zOffset <= halfSize; zOffset++) {
+                    if (!AsteroidDimensions.isInsideAsteroid(xOffset, yOffset, zOffset, halfSize)) {
+                        continue;
+                    }
+                    BlockPos spawnPos = new BlockPos(x + xOffset, spawnY + yOffset, z + zOffset);
+                    int chunkX = spawnPos.getX() >> 4;
+                    int chunkZ = spawnPos.getZ() >> 4;
+                    level.getChunk(chunkX, chunkZ);
+                    long chunkKey = ((long) chunkZ << 32) | (chunkX & 0xFFFFFFFFL);
+                    if (forcedChunks.add(chunkKey)) {
+                        level.setChunkForced(chunkX, chunkZ, true);
+                    }
+                    level.setBlock(spawnPos, Blocks.MAGMA_BLOCK.defaultBlockState(), 3);
+                    FallingBlockEntity piece = FallingBlockEntity.fall(
+                            level,
+                            spawnPos,
+                            Blocks.MAGMA_BLOCK.defaultBlockState()
+                    );
+                    piece.disableDrop();
+                    piece.setNoGravity(true);
+                    piece.noPhysics = true;
+                    piece.setDeltaMovement(Vec3.ZERO);
+                    pieces.add(piece);
+                    offsets.add(new BlockPos(xOffset, yOffset, zOffset));
+                    if (xOffset == 0 && yOffset == 0 && zOffset == 0) {
+                        centerEntity = piece;
+                    }
+                }
+            }
+        }
+        level.sendParticles(
+                ParticleTypes.FLAME,
+                strike.x,
+                spawnY,
+                strike.z,
+                24,
+                0.6D,
+                0.6D,
+                0.6D,
+                0.02D
+        );
+        level.playSound(
+                null,
+                new BlockPos(x, spawnY, z),
+                net.minecraft.sounds.SoundEvents.FIRECHARGE_USE,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                3.0F,
+                0.55F
+        );
+        return new AsteroidFlight(
+                pieces,
+                offsets,
+                centerEntity,
+                forcedChunks,
+                strike,
+                impactY,
+                level.getGameTime(),
+                spawnY
+        );
+    }
+
+    private static void setAsteroidClusterPosition(AsteroidFlight flight, double centerY) {
+        setAsteroidClusterPosition(flight, centerY, 0.0D);
+    }
+
+    // Returns {y, velocityY}: constant fast fall, then linear braking over the last 30 blocks.
+    private static double[] asteroidFlightState(AsteroidFlight flight, double ticks) {
+        double distance = flight.startY - flight.impactY;
+        double brake = Math.min(distance, 30.0D);
+        double fast = distance - brake;
+        double speed = (fast + 2.0D * brake) / ASTEROID_FLIGHT_TICKS;
+        double fastTicks = fast / speed;
+        double fallen;
+        double velocity;
+        if (ticks <= fastTicks) {
+            fallen = speed * ticks;
+            velocity = speed;
+        } else {
+            double brakeTicks = 2.0D * brake / speed;
+            double q = Math.min(1.0D, (ticks - fastTicks) / brakeTicks);
+            fallen = fast + brake * (2.0D * q - q * q);
+            velocity = speed * (1.0D - q);
+        }
+        return new double[]{flight.startY - fallen, -velocity};
+    }
+
+    private static void setAsteroidClusterPosition(AsteroidFlight flight, double centerY, double velocityY) {
+        for (int i = 0; i < flight.entities.size(); i++) {
+            FallingBlockEntity piece = flight.entities.get(i);
+            BlockPos offset = flight.offsets.get(i);
+            piece.setPos(
+                    flight.strike.x + offset.getX(),
+                    centerY + offset.getY(),
+                    flight.strike.z + offset.getZ()
+            );
+            piece.setDeltaMovement(0.0D, velocityY, 0.0D);
+            piece.hurtMarked = velocityY != 0.0D;
+        }
+    }
+
+    private static void impactAsteroid(ServerLevel level, ScheduledStrike strike) {
+        int craterDepth = Math.max(8, Math.min(48, strike.radius / 3));
+        AABB area = new AABB(
+                strike.x - strike.radius,
+                level.getMinBuildHeight(),
+                strike.z - strike.radius,
+                strike.x + strike.radius + 1.0D,
+                level.getMaxBuildHeight(),
+                strike.z + strike.radius + 1.0D
+        );
+        removeAsteroidEntities(
+                level,
+                area,
+                strike
+        );
+        BlockPos center = BlockPos.containing(strike.x, strike.y, strike.z);
+        level.sendParticles(
+                ParticleTypes.EXPLOSION_EMITTER,
+                strike.x,
+                strike.y,
+                strike.z,
+                1,
+                0.0D,
+                0.0D,
+                0.0D,
+                0.0D
+        );
+        level.sendParticles(ParticleTypes.FLAME, strike.x, strike.y, strike.z, 80, 2.0D, 1.0D, 2.0D, 0.12D);
+        level.playSound(
+                null,
+                center,
+                net.minecraft.sounds.SoundEvents.GENERIC_EXPLODE,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                8.0F,
+                0.5F
+        );
+        level.playSound(
+                null,
+                center,
+                net.minecraft.sounds.SoundEvents.LIGHTNING_BOLT_THUNDER,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                8.0F,
+                0.55F
+        );
+    }
+
+    private static void removeAsteroidEntities(ServerLevel level, AABB area, ScheduledStrike strike) {
+        double radiusSquared = strike.radius * (double) strike.radius;
+        int craterDepth = Math.max(8, Math.min(48, strike.radius / 3));
+        List<Entity> entities = level.getEntities(
+                (Entity) null,
+                area,
+                entity -> {
+                    if (horizontalDistanceSquared(entity.position(), strike.x, strike.z) > radiusSquared
+                            || entity instanceof Player player
+                            && (player.isCreative() || player.isSpectator())) {
+                        return false;
+                    }
+
+                    return entity.getBoundingBox().maxY >= strike.y - craterDepth;
+                }
+        );
+        ServerPlayer owner = level.getServer().getPlayerList().getPlayer(strike.owner);
+        DamageSource damageSource = owner == null ? null
+                : createStrikeDamageSource(owner, AttackMode.ASTEROID_BOMBARDMENT);
+        for (Entity entity : entities) {
+            if (owner != null) {
+                if (entity instanceof LivingEntity livingEntity) {
+                    livingEntity.setLastHurtByPlayer(owner);
+                }
+                entity.hurt(damageSource, 1_000_000.0F);
+            }
+            if (!entity.isRemoved()) {
+                entity.kill();
+            }
+        }
+    }
+
+    private static void impactMicrobots(ServerLevel level, ScheduledStrike strike) {
+        if (!strike.microbotsRevealed) {
+            revealMicrobotTargets(level, strike);
+        }
+
+        ServerPlayer owner = level.getServer().getPlayerList().getPlayer(strike.owner);
+        DamageSource damageSource = owner == null ? null
+                : createStrikeDamageSource(owner, AttackMode.ANTI_ORGANIC_MICROBOTS);
+        for (UUID targetId : strike.microbotTargets) {
+            Entity entity = level.getEntity(targetId);
+            if (!(entity instanceof LivingEntity livingEntity) || entity.isRemoved()) {
+                continue;
+            }
+            if (owner != null) {
+                livingEntity.setLastHurtByPlayer(owner);
+                livingEntity.hurt(damageSource, 1_000_000.0F);
+            }
+            if (!livingEntity.isRemoved()) {
+                livingEntity.kill();
+            }
+        }
+
+        level.playSound(
+                null,
+                BlockPos.containing(strike.x, strike.y, strike.z),
+                net.minecraft.sounds.SoundEvents.BEACON_DEACTIVATE,
+                net.minecraft.sounds.SoundSource.WEATHER,
+                5.0F,
+                0.65F
+        );
+        level.sendParticles(
+                ParticleTypes.PORTAL,
+                strike.x,
+                strike.y,
+                strike.z,
+                48,
+                1.5D,
+                1.0D,
+                1.5D,
+                0.35D
+        );
+    }
+
+    private static void revealMicrobotTargets(ServerLevel level, ScheduledStrike strike) {
+        strike.microbotsRevealed = true;
+        double radiusSquared = strike.radius * (double) strike.radius;
+        AABB area = new AABB(
+                strike.x - strike.radius,
+                level.getMinBuildHeight(),
+                strike.z - strike.radius,
+                strike.x + strike.radius + 1.0D,
+                level.getMaxBuildHeight(),
+                strike.z + strike.radius + 1.0D
+        );
+        List<LivingEntity> targets = level.getEntitiesOfClass(
+                LivingEntity.class,
+                area,
+                entity -> horizontalDistanceSquared(entity.position(), strike.x, strike.z) <= radiusSquared
+                        && !(entity instanceof Player player
+                        && (player.isCreative() || player.isSpectator()))
+        );
+        for (LivingEntity entity : targets) {
+            strike.microbotTargets.add(entity.getUUID());
+            entity.addEffect(new MobEffectInstance(
+                    MobEffects.GLOWING,
+                    MICROBOT_REVEAL_TICKS + 10,
+                    0,
+                    true,
+                    false,
+                    false
+            ));
+        }
+        emitMicrobotTargetParticles(level, strike);
+    }
+
+    private static void emitMicrobotTargetParticles(ServerLevel level, ScheduledStrike strike) {
+        for (UUID targetId : strike.microbotTargets) {
+            Entity entity = level.getEntity(targetId);
+            if (!(entity instanceof LivingEntity livingEntity) || entity.isRemoved()) {
+                continue;
+            }
+            double centerY = entity.getY() + entity.getBbHeight() * 0.5D;
+            level.sendParticles(
+                    ParticleTypes.PORTAL,
+                    entity.getX(),
+                    centerY,
+                    entity.getZ(),
+                    8,
+                    entity.getBbWidth() * 0.45D,
+                    entity.getBbHeight() * 0.4D,
+                    entity.getBbWidth() * 0.45D,
+                    0.12D
+            );
+            level.sendParticles(
+                    ParticleTypes.END_ROD,
+                    entity.getX(),
+                    centerY,
+                    entity.getZ(),
+                    4,
+                    entity.getBbWidth() * 0.35D,
+                    entity.getBbHeight() * 0.4D,
+                    entity.getBbWidth() * 0.35D,
+                    0.02D
+            );
+            level.sendParticles(
+                    ParticleTypes.WITCH,
+                    entity.getX(),
+                    centerY,
+                    entity.getZ(),
+                    4,
+                    entity.getBbWidth() * 0.4D,
+                    entity.getBbHeight() * 0.4D,
+                    entity.getBbWidth() * 0.4D,
+                    0.04D
+            );
+        }
+    }
+
+    private static DestructionJob createAsteroidJob(ScheduledStrike strike, int landingY) {
+        int centerX = (int) Math.floor(strike.x);
+        int centerZ = (int) Math.floor(strike.z);
+        double scorchedRadius = strike.radius
+                + scorchedRimWidth(strike.radius)
+                + scorchedRimJaggedness(strike.radius) * 1.4D
+                + 1.0D;
+        int chunkRadius = (int) Math.ceil(scorchedRadius);
+        int minChunkX = Math.floorDiv(centerX - chunkRadius, 16);
+        int maxChunkX = Math.floorDiv(centerX + chunkRadius, 16);
+        int minChunkZ = Math.floorDiv(centerZ - chunkRadius, 16);
+        int maxChunkZ = Math.floorDiv(centerZ + chunkRadius, 16);
+        List<ChunkPos> chunks = new ArrayList<>();
+        double radiusSquared = scorchedRadius * scorchedRadius;
+
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                int minX = chunkX << 4;
+                int minZ = chunkZ << 4;
+                double nearestX = clamp(strike.x, minX, minX + 15);
+                double nearestZ = clamp(strike.z, minZ, minZ + 15);
+                double dx = nearestX - strike.x;
+                double dz = nearestZ - strike.z;
+                if (dx * dx + dz * dz <= radiusSquared) {
+                    chunks.add(new ChunkPos(chunkX, chunkZ));
+                }
+            }
+        }
+        chunks.sort(Comparator.comparingDouble(pos -> {
+            double dx = pos.getMinBlockX() + 8.0D - strike.x;
+            double dz = pos.getMinBlockZ() + 8.0D - strike.z;
+            return dx * dx + dz * dz;
+        }));
+        return new DestructionJob(
+                new ArrayDeque<>(chunks),
+                new ArrayDeque<>(),
+                strike.owner,
+                strike.x,
+                strike.z,
+                strike.radius,
+                AttackMode.ASTEROID_BOMBARDMENT,
+                landingY
+        );
+    }
+
+    private static void carveAsteroidChunk(ServerLevel level, DestructionJob job, ChunkPos chunkPos) {
+        level.getChunk(chunkPos.x, chunkPos.z);
+        double radiusSquared = job.radius * (double) job.radius;
+        int maxDepth = Math.max(2, Math.min(48, job.radius / 3));
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int maxY = level.getMaxBuildHeight();
+
+        for (int localX = 0; localX < 16; localX++) {
+            int x = minX + localX;
+            for (int localZ = 0; localZ < 16; localZ++) {
+                int z = minZ + localZ;
+                double dx = x + 0.5D - job.x;
+                double dz = z + 0.5D - job.z;
+                double distanceSquared = dx * dx + dz * dz;
+                if (distanceSquared > radiusSquared) {
+                    continue;
+                }
+
+                for (int y = maxY - 1; y >= job.landingY; y--) {
+                    pos.set(x, y, z);
+                    var state = level.getBlockState(pos);
+                    if (!state.isAir() && state.getDestroySpeed(level, pos) >= 0.0F) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                    }
+                }
+
+                double craterProfile = Math.sqrt(Math.max(0.0D, 1.0D - distanceSquared / radiusSquared));
+                int depth = Math.max(1, (int) Math.round(maxDepth * craterProfile));
+                int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                int bottomY = Math.max(level.getMinBuildHeight(), surfaceY - depth + 1);
+                for (int y = surfaceY; y >= bottomY; y--) {
+                    pos.set(x, y, z);
+                    var state = level.getBlockState(pos);
+                    if (!state.isAir() && state.getDestroySpeed(level, pos) >= 0.0F) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+                    }
+                }
+                if (bottomY > level.getMinBuildHeight()) {
+                    pos.set(x, bottomY, z);
+                    if (level.isEmptyBlock(pos)
+                            && level.getBlockState(pos.below()).isFaceSturdy(level, pos.below(), Direction.UP)) {
+                        level.setBlock(pos, randomScorchedBlock(level.getRandom()).defaultBlockState(), 3);
+                    }
+                }
+            }
+        }
+        spawnScorchedRim(level, job, chunkPos, level.getRandom());
+    }
+
+    private static void leaveAsteroidCore(ServerLevel level, DestructionJob job) {
+        int centerX = (int) Math.floor(job.x);
+        int centerZ = (int) Math.floor(job.z);
+        int halfSize = AsteroidDimensions.halfSizeForRadius(job.radius);
+        int coreCenterY = Math.max(
+                level.getMinBuildHeight(),
+                job.landingY - Math.max(2, Math.min(48, job.radius / 3)) + 1
+        );
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int yOffset = -halfSize; yOffset <= halfSize; yOffset++) {
+            for (int xOffset = -halfSize; xOffset <= halfSize; xOffset++) {
+                for (int zOffset = -halfSize; zOffset <= halfSize; zOffset++) {
+                    if (!AsteroidDimensions.isInsideAsteroid(xOffset, yOffset, zOffset, halfSize)) {
+                        continue;
+                    }
+                    pos.set(centerX + xOffset, coreCenterY + yOffset, centerZ + zOffset);
+                    if (pos.getY() < level.getMinBuildHeight() || pos.getY() >= level.getMaxBuildHeight()) {
+                        continue;
+                    }
+                    int material = level.getRandom().nextInt(10);
+                    var coreBlock = xOffset == 0 && yOffset == 0 && zOffset == 0 || material < 3
+                            ? Blocks.MAGMA_BLOCK
+                            : material < 7 ? Blocks.BLACKSTONE
+                            : material < 9 ? Blocks.OBSIDIAN : Blocks.BASALT;
+                    level.setBlock(pos, coreBlock.defaultBlockState(), 3);
+                }
+            }
+        }
     }
 
     private static DestructionJob createJob(ScheduledStrike strike) {
@@ -273,7 +855,9 @@ public final class StrikeManager {
                 strike.owner,
                 strike.x,
                 strike.z,
-                strike.radius
+                strike.radius,
+                AttackMode.ENTROPY_INVERSION,
+                BlockPos.containing(strike.x, strike.y, strike.z).getY()
         );
     }
 
@@ -304,7 +888,8 @@ public final class StrikeManager {
                 job.x,
                 job.z,
                 job.radius,
-                job.owner
+                job.owner,
+                AttackMode.ENTROPY_INVERSION
         );
         if (columnCount == 0) {
             spawnScorchedRim(level, job, chunkPos, random);
@@ -527,13 +1112,24 @@ public final class StrikeManager {
                     continue;
                 }
 
-                var scarBlock = random.nextInt(4) == 0
-                        ? Blocks.MAGMA_BLOCK
-                        : random.nextBoolean() ? Blocks.BLACKSTONE : Blocks.BASALT;
-                level.setBlock(pos, scarBlock.defaultBlockState(), 3);
+                level.setBlock(pos, randomScorchedBlock(random).defaultBlockState(), 3);
             }
         }
         spawnEvaporationEffects(level, evaporationPositions);
+    }
+
+    private static net.minecraft.world.level.block.Block randomScorchedBlock(RandomSource random) {
+        int material = random.nextInt(8);
+        if (material < 2) {
+            return Blocks.MAGMA_BLOCK;
+        }
+        if (material < 5) {
+            return Blocks.BLACKSTONE;
+        }
+        if (material < 7) {
+            return Blocks.BASALT;
+        }
+        return Blocks.OBSIDIAN;
     }
 
     private static void coolAdjacentLava(ServerLevel level, DestructionJob job, BlockPos waterPos) {
@@ -635,7 +1231,8 @@ public final class StrikeManager {
             double x,
             double z,
             int radius,
-            UUID ownerId
+            UUID ownerId,
+            AttackMode attackMode
     ) {
         double radiusSquared = radius * (double) radius;
         List<Entity> entities = level.getEntities(
@@ -646,7 +1243,8 @@ public final class StrikeManager {
                         && (player.isCreative() || player.isSpectator()))
         );
         ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
-        DamageSource damageSource = owner == null ? null : createStrikeDamageSource(owner);
+        DamageSource damageSource = owner == null ? null
+                : createStrikeDamageSource(owner, attackMode);
         for (Entity entity : entities) {
             if (owner != null) {
                 if (entity instanceof LivingEntity livingEntity) {
@@ -660,13 +1258,17 @@ public final class StrikeManager {
         }
     }
 
-    private static DamageSource createStrikeDamageSource(ServerPlayer owner) {
+    private static DamageSource createStrikeDamageSource(ServerPlayer owner, AttackMode attackMode) {
         DamageSource playerAttack = owner.damageSources().playerAttack(owner);
         return new DamageSource(playerAttack.typeHolder(), owner, owner) {
             @Override
             public Component getLocalizedDeathMessage(LivingEntity entity) {
                 return Component.translatable(
-                        "death.attack.entropyinversion",
+                        switch (attackMode) {
+                            case ASTEROID_BOMBARDMENT -> "death.attack.entropyinversion.asteroid";
+                            case ANTI_ORGANIC_MICROBOTS -> "death.attack.entropyinversion.microbots";
+                            default -> "death.attack.entropyinversion";
+                        },
                         entity.getDisplayName()
                 );
             }
@@ -690,7 +1292,8 @@ public final class StrikeManager {
             if (gameTime >= nextWarningAt) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.translatable(
-                                "message.entropyinversion.in_strike_zone",
+                                "message.entropyinversion.in_attack_zone",
+                                Component.translatable(strike.attackMode.getNameKey()),
                                 strike.radius
                         ),
                         true
@@ -713,6 +1316,39 @@ public final class StrikeManager {
     private static final class LevelState {
         private final List<ScheduledStrike> scheduled = new ArrayList<>();
         private final ArrayDeque<DestructionJob> jobs = new ArrayDeque<>();
+        private final Map<UUID, AsteroidFlight> asteroids = new HashMap<>();
+    }
+
+    private static final class AsteroidFlight {
+        private final List<FallingBlockEntity> entities;
+        private final List<BlockPos> offsets;
+        private final FallingBlockEntity centerEntity;
+        private final Set<Long> forcedChunks;
+        private final ScheduledStrike strike;
+        private final int impactY;
+        private final long startedAt;
+        private final double startY;
+        private boolean impacted;
+
+        private AsteroidFlight(
+                List<FallingBlockEntity> entities,
+                List<BlockPos> offsets,
+                FallingBlockEntity centerEntity,
+                Set<Long> forcedChunks,
+                ScheduledStrike strike,
+                int impactY,
+                long startedAt,
+                double startY
+        ) {
+            this.entities = entities;
+            this.offsets = offsets;
+            this.centerEntity = centerEntity;
+            this.forcedChunks = forcedChunks;
+            this.strike = strike;
+            this.impactY = impactY;
+            this.startedAt = startedAt;
+            this.startY = startY;
+        }
     }
 
     private static final class ScheduledStrike {
@@ -722,15 +1358,30 @@ public final class StrikeManager {
         private final double z;
         private final UUID owner;
         private final int radius;
+        private final AttackMode attackMode;
+        private final int cutsceneTicks;
+        private final Set<UUID> microbotTargets = new LinkedHashSet<>();
+        private boolean microbotsRevealed;
         private final Map<UUID, Long> nextWarningAt = new HashMap<>();
 
-        private ScheduledStrike(long dueAt, double x, double y, double z, UUID owner, int radius) {
+        private ScheduledStrike(
+                long dueAt,
+                double x,
+                double y,
+                double z,
+                UUID owner,
+                int radius,
+                AttackMode attackMode,
+                int cutsceneTicks
+        ) {
             this.dueAt = dueAt;
             this.x = x;
             this.y = y;
             this.z = z;
             this.owner = owner;
             this.radius = radius;
+            this.attackMode = attackMode;
+            this.cutsceneTicks = cutsceneTicks;
         }
     }
 
@@ -741,15 +1392,18 @@ public final class StrikeManager {
         private final double x;
         private final double z;
         private final int radius;
+        private final AttackMode attackMode;
+        private final int landingY;
         private final Set<Long> cooledPositions = new HashSet<>();
-
         private DestructionJob(
                 ArrayDeque<ChunkPos> chunks,
                 ArrayDeque<ChunkPos> waterCleanupChunks,
                 UUID owner,
                 double x,
                 double z,
-                int radius
+                int radius,
+                AttackMode attackMode,
+                int landingY
         ) {
             this.chunks = chunks;
             this.waterCleanupChunks = waterCleanupChunks;
@@ -757,6 +1411,8 @@ public final class StrikeManager {
             this.x = x;
             this.z = z;
             this.radius = radius;
+            this.attackMode = attackMode;
+            this.landingY = landingY;
         }
     }
 }

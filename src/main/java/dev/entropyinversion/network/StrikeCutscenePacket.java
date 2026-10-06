@@ -1,6 +1,7 @@
 package dev.entropyinversion.network;
 
 import dev.entropyinversion.client.CutsceneOverlay;
+import dev.entropyinversion.item.AttackMode;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
@@ -14,13 +15,22 @@ public final class StrikeCutscenePacket {
     private final double z;
     private final int duration;
     private final int radius;
+    private final int attackMode;
 
-    public StrikeCutscenePacket(double x, double y, double z, int duration, int radius) {
+    public StrikeCutscenePacket(
+            double x,
+            double y,
+            double z,
+            int duration,
+            int radius,
+            AttackMode attackMode
+    ) {
         this.x = x;
         this.y = y;
         this.z = z;
         this.duration = duration;
         this.radius = radius;
+        this.attackMode = attackMode.ordinal();
     }
 
     public static void encode(StrikeCutscenePacket packet, FriendlyByteBuf buffer) {
@@ -29,15 +39,24 @@ public final class StrikeCutscenePacket {
         buffer.writeDouble(packet.z);
         buffer.writeVarInt(packet.duration);
         buffer.writeVarInt(packet.radius);
+        buffer.writeVarInt(packet.attackMode);
     }
 
     public static StrikeCutscenePacket decode(FriendlyByteBuf buffer) {
+        double x = buffer.readDouble();
+        double y = buffer.readDouble();
+        double z = buffer.readDouble();
+        int duration = buffer.readVarInt();
+        int radius = buffer.readVarInt();
+        int attackMode = buffer.readVarInt();
+        AttackMode mode = AttackMode.fromOrdinal(attackMode);
         return new StrikeCutscenePacket(
-                buffer.readDouble(),
-                buffer.readDouble(),
-                buffer.readDouble(),
-                buffer.readVarInt(),
-                buffer.readVarInt()
+                x,
+                y,
+                z,
+                duration,
+                radius,
+                mode == null ? AttackMode.ENTROPY_INVERSION : mode
         );
     }
 
@@ -52,7 +71,10 @@ public final class StrikeCutscenePacket {
                         packet.y,
                         packet.z,
                         packet.duration,
-                        packet.radius
+                        packet.radius,
+                        AttackMode.fromOrdinal(packet.attackMode) == null
+                                ? AttackMode.ENTROPY_INVERSION
+                                : AttackMode.fromOrdinal(packet.attackMode)
                 )));
         context.setPacketHandled(true);
     }

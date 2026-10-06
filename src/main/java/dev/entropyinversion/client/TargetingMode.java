@@ -2,8 +2,10 @@ package dev.entropyinversion.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import dev.entropyinversion.AsteroidDimensions;
 import dev.entropyinversion.EntropyInversionMod;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.item.AttackMode;
 import dev.entropyinversion.network.LockStrikeTargetPacket;
 import dev.entropyinversion.network.RequestStrikePacket;
 import dev.entropyinversion.network.StrikeNetwork;
@@ -46,16 +48,20 @@ public final class TargetingMode {
     private static int holdTicks;
     private static int strikeRadius = EntropyInversionRequestorItem.DEFAULT_STRIKE_RADIUS;
     private static Vec3 target;
+    private static AttackMode attackMode = AttackMode.ENTROPY_INVERSION;
+    private static InteractionHand requestorHand = InteractionHand.MAIN_HAND;
 
     private TargetingMode() {
     }
 
-    public static void start() {
+    public static void start(InteractionHand hand) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.level == null) {
             return;
         }
         active = true;
+        requestorHand = hand;
+        attackMode = AttackMode.fromStack(minecraft.player.getItemInHand(requestorHand));
         leftButtonDown = false;
         longPressHandled = false;
         holdTicks = 0;
@@ -151,7 +157,8 @@ public final class TargetingMode {
         Minecraft minecraft = Minecraft.getInstance();
         Player player = minecraft.player;
         if (player == null || minecraft.level == null || minecraft.screen != null
-                || !hasRequestor(player)) {
+                || !player.getItemInHand(requestorHand)
+                .is(EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get())) {
             cancel();
             return;
         }
@@ -169,7 +176,11 @@ public final class TargetingMode {
                 } else if (minecraft.getConnection() != null) {
                     active = false;
                     leftButtonDown = false;
-                    StrikeNetwork.CHANNEL.sendToServer(new RequestStrikePacket(strikeRadius));
+                    StrikeNetwork.CHANNEL.sendToServer(new RequestStrikePacket(
+                            strikeRadius,
+                            attackMode,
+                            requestorHand
+                    ));
                 }
             }
         }
@@ -177,13 +188,13 @@ public final class TargetingMode {
 
     @SubscribeEvent
     public static void onWorldRender(RenderLevelStageEvent event) {
-        if (!active || target == null
-                || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+        if (!active || event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
             return;
         }
 
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null) {
+        Vec3 previewTarget = getWorldPreviewTarget(minecraft);
+        if (minecraft.level == null || previewTarget == null) {
             return;
         }
         Vec3 camera = event.getCamera().getPosition();
@@ -193,72 +204,122 @@ public final class TargetingMode {
         VertexConsumer lines = minecraft.renderBuffers().bufferSource().getBuffer(RenderType.lines());
         int bottomY = minecraft.level.getMinBuildHeight();
         int topY = minecraft.level.getMaxBuildHeight();
-        int targetY = BlockPos.containing(target).getY();
+        int targetY = BlockPos.containing(previewTarget).getY();
         float pulse = 0.72F + 0.22F * (float) Math.sin(minecraft.level.getGameTime() * 0.18D);
 
-        drawRing(
-                lines,
-                poseStack,
-                target.x,
-                target.z,
-                targetY + 0.08D,
-                strikeRadius,
-                0.18F,
-                0.92F,
-                1.0F,
-                pulse
-        );
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            drawAsteroidRange(
+                    minecraft,
+                    lines,
+                    poseStack,
+                    previewTarget.x,
+                    previewTarget.z,
+                    targetY,
+                    strikeRadius,
+                    pulse
+            );
+        } else {
+            drawRing(
+                    lines,
+                    poseStack,
+                    previewTarget.x,
+                    previewTarget.z,
+                    targetY + 0.08D,
+                    strikeRadius,
+                    0.18F,
+                    0.92F,
+                    1.0F,
+                    pulse
+            );
+        }
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            double radiusRingY = minecraft.level.getHeight(
+                    net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    BlockPos.containing(previewTarget).getX(),
+                    BlockPos.containing(previewTarget).getZ()
+            ) + 0.08D;
+            drawAsteroidPreview(
+                    lines,
+                    poseStack,
+                    previewTarget.x,
+                    radiusRingY + 3.0D,
+                    previewTarget.z,
+                    AsteroidDimensions.diameterForRadius(strikeRadius),
+                    0.96F,
+                    0.47F,
+                    0.18F,
+                    pulse
+            );
+        }
         drawTargetBlockOutline(
                 lines,
                 poseStack,
-                BlockPos.containing(target),
+                BlockPos.containing(previewTarget),
                 pulse
         );
-        drawRing(
-                lines,
-                poseStack,
-                target.x,
-                target.z,
-                bottomY + 0.02D,
-                strikeRadius,
-                0.1F,
-                0.85F,
-                1.0F,
-                0.9F
-        );
-        drawRing(
-                lines,
-                poseStack,
-                target.x,
-                target.z,
-                topY - 0.02D,
-                strikeRadius,
-                0.1F,
-                0.85F,
-                1.0F,
-                0.9F
-        );
-        for (int i = 0; i < 16; i++) {
-            double angle = Math.PI * 2.0D * i / 16.0D;
-            double x = target.x + Math.cos(angle) * strikeRadius;
-            double z = target.z + Math.sin(angle) * strikeRadius;
-            drawLine(
+        if (attackMode != AttackMode.ASTEROID_BOMBARDMENT) {
+            drawRing(
                     lines,
                     poseStack,
-                    x,
-                    bottomY,
-                    z,
-                    x,
-                    topY,
-                    z,
+                    previewTarget.x,
+                    previewTarget.z,
+                    bottomY + 0.02D,
+                    strikeRadius,
                     0.1F,
                     0.85F,
                     1.0F,
-                    0.8F
+                    0.9F
             );
+            drawRing(
+                    lines,
+                    poseStack,
+                    previewTarget.x,
+                    previewTarget.z,
+                    topY - 0.02D,
+                    strikeRadius,
+                    0.1F,
+                    0.85F,
+                    1.0F,
+                    0.9F
+            );
+            for (int i = 0; i < 16; i++) {
+                double angle = Math.PI * 2.0D * i / 16.0D;
+                double x = previewTarget.x + Math.cos(angle) * strikeRadius;
+                double z = previewTarget.z + Math.sin(angle) * strikeRadius;
+                drawLine(
+                        lines,
+                        poseStack,
+                        x,
+                        bottomY,
+                        z,
+                        x,
+                        topY,
+                        z,
+                        0.1F,
+                        0.85F,
+                        1.0F,
+                        0.8F
+                );
+            }
+
         }
         minecraft.renderBuffers().bufferSource().endBatch(RenderType.lines());
         poseStack.popPose();
+    }
+
+    private static Vec3 getWorldPreviewTarget(Minecraft minecraft) {
+        if (target != null) {
+            return target;
+        }
+        Player player = minecraft.player;
+        if (player == null) {
+            return null;
+        }
+        HitResult hit = player.pick(EntropyInversionRequestorItem.TARGETING_RANGE, 1.0F, true);
+        return hit instanceof BlockHitResult blockHit
+                && hit.getType() == HitResult.Type.BLOCK
+                ? blockHit.getLocation()
+                : null;
     }
 
     private static void drawTargetBlockOutline(
@@ -296,13 +357,20 @@ public final class TargetingMode {
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
         int y = height - 96;
-        event.getGuiGraphics().fill(centerX - 145, y - 6, centerX + 145, y + 56, 0xCC081522);
+        event.getGuiGraphics().fill(centerX - 145, y - 6, centerX + 145, y + 68, 0xCC081522);
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 Component.translatable("gui.entropyinversion.targeting.title"),
                 centerX,
                 y,
                 0xFF8EEBFF
+        );
+        event.getGuiGraphics().drawCenteredString(
+                minecraft.font,
+                Component.translatable("gui.entropyinversion.targeting.mode", Component.translatable(attackMode.getNameKey())),
+                centerX,
+                y + 11,
+                0xFFB8E8FF
         );
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
@@ -315,26 +383,26 @@ public final class TargetingMode {
                                 (int) Math.floor(target.z)
                         ),
                 centerX,
-                y + 12,
+                y + 23,
                 0xFFFFFFFF
         );
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 Component.translatable("gui.entropyinversion.targeting.hold"),
                 centerX,
-                y + 25,
+                y + 36,
                 0xFFFFD27A
         );
         event.getGuiGraphics().drawCenteredString(
                 minecraft.font,
                 Component.translatable("gui.entropyinversion.targeting.cancel"),
                 centerX,
-                y + 36,
+                y + 47,
                 0xFFB7C9D8
         );
 
         int barLeft = centerX - 80;
-        int barTop = y + 50;
+        int barTop = y + 62;
         event.getGuiGraphics().fill(barLeft, barTop, barLeft + 160, barTop + 4, 0xFF26394A);
         int filledWidth = 160 * holdTicks / HOLD_TO_CONFIRM_TICKS;
         if (filledWidth > 0) {
@@ -360,7 +428,7 @@ public final class TargetingMode {
                         / EntropyInversionRequestorItem.MAX_STRIKE_RADIUS
         );
         int panelLeft = panelRight - panelWidth;
-        int panelTop = panelBottom - (radius * 2 + 72);
+        int panelTop = panelBottom - (radius * 2 + 104);
         int centerX = panelLeft + panelWidth / 2;
         int centerY = panelTop + 18 + radius;
         event.getGuiGraphics().fill(
@@ -405,20 +473,211 @@ public final class TargetingMode {
                 centerY + radius + 11,
                 0xFFFFFFFF
         );
-        event.getGuiGraphics().drawCenteredString(
-                Minecraft.getInstance().font,
-                Component.translatable("gui.entropyinversion.targeting.height"),
-                centerX,
-                centerY + radius + 22,
-                0xFFB7C9D8
-        );
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            event.getGuiGraphics().fill(
+                    centerX - 3,
+                    centerY - 3,
+                    centerX + 4,
+                    centerY + 4,
+                    0xFFFF8B42
+            );
+            event.getGuiGraphics().drawCenteredString(
+                    Minecraft.getInstance().font,
+                    Component.translatable(
+                            "gui.entropyinversion.targeting.asteroid_size",
+                            AsteroidDimensions.diameterForRadius(strikeRadius),
+                            AsteroidDimensions.diameterForRadius(strikeRadius),
+                            AsteroidDimensions.diameterForRadius(strikeRadius)
+                    ),
+                    centerX,
+                    centerY + radius + 22,
+                    0xFFFFA66B
+            );
+            event.getGuiGraphics().drawCenteredString(
+                    Minecraft.getInstance().font,
+                    Component.translatable(
+                            "gui.entropyinversion.targeting.crater_range",
+                            strikeRadius
+                    ),
+                    centerX,
+                    centerY + radius + 33,
+                    0xFF65E8FF
+            );
+        } else {
+            event.getGuiGraphics().drawCenteredString(
+                    Minecraft.getInstance().font,
+                    Component.translatable(
+                            "gui.entropyinversion.targeting.effect." + attackMode.getId()
+                    ),
+                    centerX,
+                    centerY + radius + 22,
+                    0xFFB7C9D8
+            );
+        }
         event.getGuiGraphics().drawCenteredString(
                 Minecraft.getInstance().font,
                 Component.translatable("gui.entropyinversion.targeting.radius_control"),
                 centerX,
-                centerY + radius + 33,
+                centerY + radius + (attackMode == AttackMode.ASTEROID_BOMBARDMENT ? 44 : 33),
                 0xFFFFD27A
         );
+    }
+
+    private static void drawAsteroidPreview(
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double bottomY,
+            double centerZ,
+            int diameter,
+            float red,
+            float green,
+            float blue,
+            float alpha
+    ) {
+        double halfSize = diameter / 2.0D;
+        double minX = centerX - halfSize;
+        double maxX = centerX + halfSize;
+        double minY = bottomY;
+        double maxY = bottomY + diameter;
+        double minZ = centerZ - halfSize;
+        double maxZ = centerZ + halfSize;
+        drawLine(lines, poseStack, minX, minY, minZ, maxX, minY, minZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, minY, maxZ, maxX, minY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, maxY, minZ, maxX, maxY, minZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, maxY, maxZ, maxX, maxY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, minY, minZ, minX, minY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, maxX, minY, minZ, maxX, minY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, maxY, minZ, minX, maxY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, maxX, maxY, minZ, maxX, maxY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, minY, minZ, minX, maxY, minZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, maxX, minY, minZ, maxX, maxY, minZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, minX, minY, maxZ, minX, maxY, maxZ, red, green, blue, alpha);
+        drawLine(lines, poseStack, maxX, minY, maxZ, maxX, maxY, maxZ, red, green, blue, alpha);
+    }
+
+    private static void drawAsteroidRange(
+            Minecraft minecraft,
+            VertexConsumer lines,
+            PoseStack poseStack,
+            double centerX,
+            double centerZ,
+            int targetY,
+            double radius,
+            float pulse
+    ) {
+        double[] groundHeights = new double[CIRCLE_SEGMENTS + 1];
+        double[] xPoints = new double[CIRCLE_SEGMENTS + 1];
+        double[] zPoints = new double[CIRCLE_SEGMENTS + 1];
+        double worldTop = minecraft.level.getMaxBuildHeight() - 1.0D;
+        for (int i = 0; i <= CIRCLE_SEGMENTS; i++) {
+            double angle = Math.PI * 2.0D * i / CIRCLE_SEGMENTS;
+            double x = centerX + Math.cos(angle) * radius;
+            double z = centerZ + Math.sin(angle) * radius;
+            xPoints[i] = x;
+            zPoints[i] = z;
+            groundHeights[i] = minecraft.level.getHeight(
+                    net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    (int) Math.floor(x),
+                    (int) Math.floor(z)
+            ) + 0.12D;
+        }
+
+        for (int i = 0; i < CIRCLE_SEGMENTS; i++) {
+            int next = i + 1;
+            double lowerGuideY = Math.max(
+                    groundHeights[i] + 12.0D,
+                    targetY + 12.0D
+            );
+            double nextLowerGuideY = Math.max(
+                    groundHeights[next] + 12.0D,
+                    targetY + 12.0D
+            );
+            double upperGuideY = Math.max(
+                    groundHeights[i] + 32.0D,
+                    targetY + 32.0D
+            );
+            double nextUpperGuideY = Math.max(
+                    groundHeights[next] + 32.0D,
+                    targetY + 32.0D
+            );
+            lowerGuideY = Math.min(lowerGuideY, worldTop);
+            nextLowerGuideY = Math.min(nextLowerGuideY, worldTop);
+            upperGuideY = Math.min(upperGuideY, worldTop);
+            nextUpperGuideY = Math.min(nextUpperGuideY, worldTop);
+            drawLine(
+                    lines,
+                    poseStack,
+                    xPoints[i],
+                    groundHeights[i],
+                    zPoints[i],
+                    xPoints[next],
+                    groundHeights[next],
+                    zPoints[next],
+                    0.12F,
+                    0.95F,
+                    1.0F,
+                    pulse
+            );
+            drawLine(
+                    lines,
+                    poseStack,
+                    xPoints[i],
+                    lowerGuideY,
+                    zPoints[i],
+                    xPoints[next],
+                    nextLowerGuideY,
+                    zPoints[next],
+                    0.12F,
+                    0.95F,
+                    1.0F,
+                    pulse
+            );
+            drawLine(
+                    lines,
+                    poseStack,
+                    xPoints[i],
+                    upperGuideY,
+                    zPoints[i],
+                    xPoints[next],
+                    nextUpperGuideY,
+                    zPoints[next],
+                    1.0F,
+                    0.58F,
+                    0.14F,
+                    pulse
+            );
+            if (i % 8 == 0) {
+                drawLine(
+                        lines,
+                        poseStack,
+                        xPoints[i],
+                        groundHeights[i],
+                        zPoints[i],
+                        xPoints[i],
+                        lowerGuideY,
+                        zPoints[i],
+                        0.12F,
+                        0.95F,
+                        1.0F,
+                        pulse
+                );
+                drawLine(
+                        lines,
+                        poseStack,
+                        xPoints[i],
+                        groundHeights[i],
+                        zPoints[i],
+                        xPoints[i],
+                        upperGuideY,
+                        zPoints[i],
+                        1.0F,
+                        0.58F,
+                        0.14F,
+                        pulse
+                );
+            }
+        }
     }
 
     private static void drawHudLine(
@@ -475,10 +734,55 @@ public final class TargetingMode {
     }
 
     private static void spawnTargetingParticles(Minecraft minecraft) {
-        if (target == null || minecraft.level == null || (minecraft.level.getGameTime() & 3L) != 0L) {
+        if (minecraft.level == null || (minecraft.level.getGameTime() & 3L) != 0L) {
             return;
         }
 
+        if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+            Vec3 previewTarget = getWorldPreviewTarget(minecraft);
+            if (previewTarget == null) {
+                return;
+            }
+            for (int i = 0; i < 32; i++) {
+                double angle = Math.PI * 2.0D * i / 32.0D;
+                double x = previewTarget.x + Math.cos(angle) * strikeRadius;
+                double z = previewTarget.z + Math.sin(angle) * strikeRadius;
+                int surfaceY = minecraft.level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                        (int) Math.floor(x),
+                        (int) Math.floor(z)
+                );
+                for (int height = 0; height <= 24; height += 6) {
+                    double particleY = Math.min(
+                            surfaceY + 0.25D + height,
+                            minecraft.level.getMaxBuildHeight() - 1.0D
+                    );
+                    minecraft.level.addParticle(
+                            ParticleTypes.END_ROD,
+                            x,
+                            particleY,
+                            z,
+                            0.0D,
+                            0.025D,
+                            0.0D
+                    );
+                    minecraft.level.addParticle(
+                            ParticleTypes.FLAME,
+                            x,
+                            particleY,
+                            z,
+                            0.0D,
+                            0.015D,
+                            0.0D
+                    );
+                }
+            }
+            return;
+        }
+
+        if (target == null) {
+            return;
+        }
         double time = minecraft.level.getGameTime() * 0.12D;
         double boundaryX = target.x + Math.cos(time) * strikeRadius;
         double boundaryZ = target.z + Math.sin(time) * strikeRadius;
@@ -500,13 +804,6 @@ public final class TargetingMode {
                 0.015D,
                 0.0D
         );
-    }
-
-    private static boolean hasRequestor(Player player) {
-        return player.getItemInHand(InteractionHand.MAIN_HAND)
-                .is(EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get())
-                || player.getItemInHand(InteractionHand.OFF_HAND)
-                .is(EntropyInversionMod.ENTROPY_INVERSION_REQUESTOR.get());
     }
 
     private static void cancel() {

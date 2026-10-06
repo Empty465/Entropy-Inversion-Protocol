@@ -6,7 +6,7 @@ import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.simple.SimpleChannel;
 
 public final class StrikeNetwork {
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(EntropyInversionMod.MOD_ID, "main"),
             () -> PROTOCOL_VERSION,
@@ -38,6 +38,13 @@ public final class StrikeNetwork {
                 LockStrikeTargetPacket::encode,
                 LockStrikeTargetPacket::decode,
                 LockStrikeTargetPacket::handle
+        );
+        CHANNEL.registerMessage(
+                3,
+                SelectAttackModePacket.class,
+                SelectAttackModePacket::encode,
+                SelectAttackModePacket::decode,
+                SelectAttackModePacket::handle
         );
     }
 }
