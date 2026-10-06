@@ -37,6 +37,7 @@ public final class CutsceneOverlay {
     private static final float LOCK_SCENE_START = 0.34F;
     private static final float IMPACT_SCENE_START = 0.51F;
     private static final float IMPACT_BEAM_END = 0.72F;
+    private static final float ASTEROID_COVER_END = 0.5F;
     private static final int STAR_COUNT = 176;
     private static final int SCANLINE_COUNT = 30;
     private static final int CHARGE_PARTICLE_INTERVAL = 2;
@@ -101,6 +102,9 @@ public final class CutsceneOverlay {
             }
 
             float progress = (minecraft.level.getGameTime() - startedAt) / (float) duration;
+            if (attackMode == AttackMode.ASTEROID_BOMBARDMENT && progress >= ASTEROID_COVER_END) {
+                return;
+            }
             spawnChargeParticles(minecraft, progress);
             spawnShockwaveParticles(minecraft, progress);
             if (progress >= 0.18F && soundStage == 0) {
@@ -174,15 +178,20 @@ public final class CutsceneOverlay {
                 1.0F,
                 (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
         );
+        boolean asteroid = attackMode == AttackMode.ASTEROID_BOMBARDMENT;
+        if (asteroid && progress >= ASTEROID_COVER_END) {
+            return;
+        }
+        float sceneEnd = asteroid ? ASTEROID_COVER_END : IMPACT_SCENE_START;
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
         int centerX = width / 2;
         int centerY = height / 2;
-        if (progress < IMPACT_SCENE_START) {
+        if (progress < sceneEnd) {
             float sceneAlpha = progress <= SPACE_SCENE_END
                     ? 1.0F
                     : 1.0F - (progress - SPACE_SCENE_END)
-                            / (IMPACT_SCENE_START - SPACE_SCENE_END);
+                            / (sceneEnd - SPACE_SCENE_END);
             drawSpaceScene(event, width, height, centerX, progress, sceneAlpha);
         } else {
             drawImpactScene(event, width, height, centerX, progress);
@@ -210,7 +219,7 @@ public final class CutsceneOverlay {
         float progress = (float) (
                 (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
         );
-        if (progress < CHARGE_SCENE_START) {
+        if (progress < CHARGE_SCENE_START || attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
             return;
         }
 

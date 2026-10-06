@@ -50,9 +50,12 @@ import java.util.UUID;
 
 public final class StrikeManager {
     private static final int CUTSCENE_TICKS = 200;
-    private static final int ASTEROID_CUTSCENE_TICKS = 260;
-    private static final int ASTEROID_FLIGHT_TICKS = 150;
-    private static final int ASTEROID_SPAWN_HEIGHT = 120;
+    private static final int ASTEROID_CUTSCENE_TICKS = 200;
+    private static final int ASTEROID_FLIGHT_TICKS = 200;
+    private static final int ASTEROID_BRAKE_DISTANCE = 30;
+    private static final int ASTEROID_BRAKE_TICKS = 40;
+    private static final int ASTEROID_SPAWN_HEIGHT = ASTEROID_BRAKE_DISTANCE
+            + (ASTEROID_FLIGHT_TICKS - ASTEROID_BRAKE_TICKS) * 3;
     private static final int MICROBOT_REVEAL_TICKS = 160;
     private static final int MICROBOT_PARTICLE_INTERVAL_TICKS = 5;
     private static final int CHUNKS_PER_TICK = 4;
@@ -368,7 +371,7 @@ public final class StrikeManager {
         int x = BlockPos.containing(strike.x, strike.y, strike.z).getX();
         int z = BlockPos.containing(strike.x, strike.y, strike.z).getZ();
         int impactY = getAsteroidImpactY(level, strike);
-        int spawnY = Math.min(level.getMaxBuildHeight() - 2, impactY + ASTEROID_SPAWN_HEIGHT);
+        int spawnY = impactY + ASTEROID_SPAWN_HEIGHT;
         int halfSize = AsteroidDimensions.halfSizeForRadius(strike.radius);
         List<BlockPos> offsets = new ArrayList<>();
         List<FallingBlockEntity> pieces = new ArrayList<>();
@@ -441,12 +444,12 @@ public final class StrikeManager {
         setAsteroidClusterPosition(flight, centerY, 0.0D);
     }
 
-    // Returns {y, velocityY}: constant fast fall, then linear braking over the last 30 blocks.
+    // Returns {y, velocityY}: constant fast fall, then cubic braking over the last 30 blocks that ends in a slow crawl.
     private static double[] asteroidFlightState(AsteroidFlight flight, double ticks) {
         double distance = flight.startY - flight.impactY;
-        double brake = Math.min(distance, 30.0D);
+        double brake = Math.min(distance, ASTEROID_BRAKE_DISTANCE);
         double fast = distance - brake;
-        double speed = (fast + 2.0D * brake) / ASTEROID_FLIGHT_TICKS;
+        double speed = 4.0D * brake / ASTEROID_BRAKE_TICKS;
         double fastTicks = fast / speed;
         double fallen;
         double velocity;
@@ -454,10 +457,10 @@ public final class StrikeManager {
             fallen = speed * ticks;
             velocity = speed;
         } else {
-            double brakeTicks = 2.0D * brake / speed;
-            double q = Math.min(1.0D, (ticks - fastTicks) / brakeTicks);
-            fallen = fast + brake * (2.0D * q - q * q);
-            velocity = speed * (1.0D - q);
+            double q = Math.min(1.0D, (ticks - fastTicks) / ASTEROID_BRAKE_TICKS);
+            double remaining = 1.0D - q;
+            fallen = fast + brake * (1.0D - Math.pow(remaining, 4.0D));
+            velocity = speed * remaining * remaining * remaining;
         }
         return new double[]{flight.startY - fallen, -velocity};
     }
