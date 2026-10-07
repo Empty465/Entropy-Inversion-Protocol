@@ -593,14 +593,8 @@ public final class TargetingMode {
                     groundHeights[next] + 12.0D,
                     targetY + 12.0D
             );
-            double upperGuideY = Math.max(
-                    groundHeights[i] + 32.0D,
-                    targetY + 32.0D
-            );
-            double nextUpperGuideY = Math.max(
-                    groundHeights[next] + 32.0D,
-                    targetY + 32.0D
-            );
+            double upperGuideY = worldTop;
+            double nextUpperGuideY = worldTop;
             lowerGuideY = Math.min(lowerGuideY, worldTop);
             nextLowerGuideY = Math.min(nextLowerGuideY, worldTop);
             upperGuideY = Math.min(upperGuideY, worldTop);
