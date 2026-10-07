@@ -1,6 +1,7 @@
 package dev.entropyinversion;
 
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
+import dev.entropyinversion.entity.AsteroidEntities;
 import dev.entropyinversion.network.StrikeNetwork;
 import dev.entropyinversion.world.StrikeManager;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -31,6 +32,7 @@ public final class EntropyInversionMod {
     public EntropyInversionMod(FMLJavaModLoadingContext context) {
         IEventBus modBus = context.getModEventBus();
         ITEMS.register(modBus);
+        AsteroidEntities.ENTITY_TYPES.register(modBus);
         modBus.addListener(this::addCreativeContents);
         StrikeNetwork.register();
         MinecraftForge.EVENT_BUS.register(new StrikeManager());

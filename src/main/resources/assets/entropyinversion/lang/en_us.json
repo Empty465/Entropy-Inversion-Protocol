@@ -31,7 +31,7 @@
   "message.entropyinversion.cooldown": "The requestor is still cooling down.",
   "message.entropyinversion.attack_requested": "%1$s requested at %2$s, %3$s, %4$s.",
   "message.entropyinversion.complete": "Entropy inversion strike zone cleared.",
-  "message.entropyinversion.asteroid_complete": "The crater is complete. A meteorite core remains at its center.",
+  "message.entropyinversion.asteroid_complete": "The asteroid has landed successfully.",
   "message.entropyinversion.microbots_complete": "Microbot release complete. %1$s living entities eliminated.",
   "gui.entropyinversion.targeting.title": "ENTROPY INVERSION TARGETING MODE",
   "gui.entropyinversion.targeting.no_target": "No block in range",

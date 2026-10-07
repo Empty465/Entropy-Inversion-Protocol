@@ -1,6 +1,8 @@
 package dev.entropyinversion.world;
 
 import dev.entropyinversion.AsteroidDimensions;
+import dev.entropyinversion.entity.AsteroidEntities;
+import dev.entropyinversion.entity.AsteroidFallingBlockEntity;
 import dev.entropyinversion.item.EntropyInversionRequestorItem;
 import dev.entropyinversion.item.AttackMode;
 import dev.entropyinversion.network.StrikeCutscenePacket;
@@ -392,15 +394,17 @@ public final class StrikeManager {
                         level.setChunkForced(chunkX, chunkZ, true);
                     }
                     level.setBlock(spawnPos, Blocks.MAGMA_BLOCK.defaultBlockState(), 3);
-                    FallingBlockEntity piece = FallingBlockEntity.fall(
-                            level,
-                            spawnPos,
-                            Blocks.MAGMA_BLOCK.defaultBlockState()
+                    AsteroidFallingBlockEntity piece = new AsteroidFallingBlockEntity(
+                            AsteroidEntities.ASTEROID_BLOCK.get(),
+                            level
                     );
+                    piece.initialize(spawnPos, Blocks.MAGMA_BLOCK.defaultBlockState());
                     piece.disableDrop();
                     piece.setNoGravity(true);
                     piece.noPhysics = true;
                     piece.setDeltaMovement(Vec3.ZERO);
+                    level.setBlock(spawnPos, Blocks.AIR.defaultBlockState(), 3);
+                    level.addFreshEntity(piece);
                     pieces.add(piece);
                     offsets.add(new BlockPos(xOffset, yOffset, zOffset));
                     if (xOffset == 0 && yOffset == 0 && zOffset == 0) {

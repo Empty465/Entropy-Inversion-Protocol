@@ -30,7 +30,7 @@
   "message.entropyinversion.cooldown": "요청기가 재사용 대기 중입니다.",
   "message.entropyinversion.attack_requested": "%1$s 공격을 %2$s, %3$s, %4$s 좌표에 요청했습니다.",
   "message.entropyinversion.complete": "엔트로피 역전 타격 범위 정리가 완료되었습니다.",
-  "message.entropyinversion.asteroid_complete": "분화구 생성이 완료되었습니다. 중앙에 운석 핵이 남았습니다.",
+  "message.entropyinversion.asteroid_complete": "소행성이 정상적으로 추락하였습니다",
   "message.entropyinversion.microbots_complete": "마이크로봇 살포 완료: 생명체 %1$s마리 제거.",
   "death.attack.entropyinversion.microbots": "%1$s은(는) 반유기체 마이크로봇에게 소멸되었습니다.",
   "gui.entropyinversion.targeting.title": "엔트로피 역전 조준 모드",
