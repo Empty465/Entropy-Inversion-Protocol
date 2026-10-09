@@ -1,6 +1,6 @@
 package dev.entropyinversion.network;
 
-import dev.entropyinversion.client.CutsceneOverlay;
+import dev.entropyinversion.client.ClientModHooks;
 import dev.entropyinversion.item.AttackMode;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
@@ -66,7 +66,7 @@ public final class StrikeCutscenePacket {
     ) {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () ->
-                () -> CutsceneOverlay.begin(
+                () -> ClientModHooks.beginCutscene(
                         packet.x,
                         packet.y,
                         packet.z,

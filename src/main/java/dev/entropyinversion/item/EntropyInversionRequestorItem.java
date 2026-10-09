@@ -1,7 +1,6 @@
 package dev.entropyinversion.item;
 
-import dev.entropyinversion.client.TargetingMode;
-import dev.entropyinversion.client.AttackModeSelectionScreen;
+import dev.entropyinversion.client.ClientModHooks;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.TextColor;
@@ -64,11 +63,10 @@ public final class EntropyInversionRequestorItem extends Item {
             if (player.isShiftKeyDown()) {
                 DistExecutor.unsafeRunWhenOn(
                         Dist.CLIENT,
-                        () -> () -> net.minecraft.client.Minecraft.getInstance()
-                                .setScreen(new AttackModeSelectionScreen(hand))
+                        () -> () -> ClientModHooks.openModeSelection(hand)
                 );
             } else {
-                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TargetingMode.start(hand));
+                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientModHooks.startTargeting(hand));
             }
             return InteractionResultHolder.success(stack);
         }
