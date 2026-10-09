@@ -25,7 +25,7 @@ Strike a designated position with an advanced weapon from beyond the galaxy, era
 | Input | Action |
 | --- | --- |
 | Right-click | Enter targeting mode |
-| Crouch + right-click | Open attack mode selector; hover over a mode for its description |
+| Crouch + right-click | Open attack mode selector |
 | Brief left-click | Select or change the targeted block |
 | Hold left-click for 1 second | Request a strike at the selected target |
 | Mouse wheel | Adjust the radius in 5-block increments |
@@ -79,7 +79,7 @@ Crouch and right-click with the Requestor to choose a mode. Hover over a mode to
 | 입력 | 동작 |
 | --- | --- |
 | 우클릭 | 조준 모드 진입 |
-| 웅크린 채 우클릭 | 공격 모드 선택 화면 열기 · 모드 위에 커서를 올려 설명 확인 |
+| 웅크린 채 우클릭 | 공격 모드 선택 화면 열기 |
 | 짧게 좌클릭 | 바라보는 블록을 목표로 지정하거나 변경 |
 | 좌클릭 1초간 누르기 | 지정된 목표에 타격 요청 |
 | 마우스 휠 | 반경을 5블록씩 조정 |
