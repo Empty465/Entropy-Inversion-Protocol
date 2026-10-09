@@ -56,6 +56,8 @@ public final class StrikeManager {
     private static final int ASTEROID_FLIGHT_TICKS = 200;
     private static final int ASTEROID_BRAKE_DISTANCE = 30;
     private static final int ASTEROID_BRAKE_TICKS = 40;
+    private static final int ASTEROID_PARTICLE_INTERVAL_TICKS = 2;
+    private static final double ASTEROID_PARTICLE_VIEW_DISTANCE_SQUARED = 512.0D * 512.0D;
     private static final int ASTEROID_SPAWN_HEIGHT = ASTEROID_BRAKE_DISTANCE
             + (ASTEROID_FLIGHT_TICKS - ASTEROID_BRAKE_TICKS) * 3;
     private static final int MICROBOT_REVEAL_TICKS = 160;
@@ -267,28 +269,9 @@ public final class StrikeManager {
             } else if (!flight.impacted) {
                 double[] flightState = asteroidFlightState(flight, elapsedTicks);
                 setAsteroidClusterPosition(flight, flightState[0], flightState[1]);
-                level.sendParticles(
-                        ParticleTypes.FLAME,
-                        asteroid.getX(),
-                        asteroid.getY(),
-                        asteroid.getZ(),
-                        4,
-                        0.65D,
-                        0.65D,
-                        0.65D,
-                        0.01D
-                );
-                level.sendParticles(
-                        ParticleTypes.LARGE_SMOKE,
-                        asteroid.getX(),
-                        asteroid.getY(),
-                        asteroid.getZ(),
-                        2,
-                        0.4D,
-                        0.4D,
-                        0.4D,
-                        0.004D
-                );
+                if (elapsedTicks % ASTEROID_PARTICLE_INTERVAL_TICKS == 0) {
+                    spawnAsteroidFlightParticles(level, flight, asteroid, elapsedTicks, flightState[1]);
+                }
             }
         }
         state.asteroids.values().removeIf(flight -> flight.impacted);
@@ -469,6 +452,59 @@ public final class StrikeManager {
         return new double[]{flight.startY - fallen, -velocity};
     }
 
+    private static void spawnAsteroidFlightParticles(
+            ServerLevel level,
+            AsteroidFlight flight,
+            FallingBlockEntity asteroid,
+            int elapsedTicks,
+            double velocityY
+    ) {
+        double halfSize = AsteroidDimensions.halfSizeForRadius(flight.strike.radius);
+        double fireRadius = Math.max(1.1D, halfSize * 0.8D);
+        double fallSpeed = Math.max(0.0D, -velocityY);
+        for (ServerPlayer player : level.players()) {
+            if (player.distanceToSqr(asteroid) > ASTEROID_PARTICLE_VIEW_DISTANCE_SQUARED) {
+                continue;
+            }
+            for (int i = 0; i < 8; i++) {
+                double angle = Math.PI * 2.0D * i / 8.0D + elapsedTicks * 0.12D;
+                double sideX = Math.cos(angle);
+                double sideZ = Math.sin(angle);
+                double particleY = asteroid.getY() + halfSize * ((i % 3) - 1) * 0.42D;
+                double flameVelocityY = 0.2D + Math.min(0.65D, fallSpeed * 0.22D);
+                level.sendParticles(
+                        player,
+                        ParticleTypes.FLAME,
+                        true,
+                        asteroid.getX() + sideX * fireRadius,
+                        particleY,
+                        asteroid.getZ() + sideZ * fireRadius,
+                        0,
+                        sideX * 0.08D,
+                        flameVelocityY,
+                        sideZ * 0.08D,
+                        1.0D
+                );
+            }
+            for (int i = 0; i < 3; i++) {
+                double angle = Math.PI * 2.0D * i / 3.0D - elapsedTicks * 0.045D;
+                level.sendParticles(
+                        player,
+                        ParticleTypes.LARGE_SMOKE,
+                        true,
+                        asteroid.getX() + Math.cos(angle) * fireRadius * 0.45D,
+                        asteroid.getY() + halfSize * 0.35D + i * 0.8D,
+                        asteroid.getZ() + Math.sin(angle) * fireRadius * 0.45D,
+                        0,
+                        Math.cos(angle) * 0.025D,
+                        0.12D + fallSpeed * 0.05D,
+                        Math.sin(angle) * 0.025D,
+                        1.0D
+                );
+            }
+        }
+    }
+
     private static void setAsteroidClusterPosition(AsteroidFlight flight, double centerY, double velocityY) {
         for (int i = 0; i < flight.entities.size(); i++) {
             FallingBlockEntity piece = flight.entities.get(i);
@@ -566,6 +602,8 @@ public final class StrikeManager {
             revealMicrobotTargets(level, strike);
         }
 
+        int capturedCount = strike.microbotTargets.size();
+        int eliminatedCount = 0;
         ServerPlayer owner = level.getServer().getPlayerList().getPlayer(strike.owner);
         DamageSource damageSource = owner == null ? null
                 : createStrikeDamageSource(owner, AttackMode.ANTI_ORGANIC_MICROBOTS);
@@ -581,6 +619,20 @@ public final class StrikeManager {
             if (!livingEntity.isRemoved()) {
                 livingEntity.kill();
             }
+            if (livingEntity.isDeadOrDying() || livingEntity.isRemoved()) {
+                eliminatedCount++;
+            }
+        }
+
+        if (owner != null) {
+            owner.displayClientMessage(
+                    Component.translatable(
+                            "message.entropyinversion.microbots_complete",
+                            capturedCount,
+                            eliminatedCount
+                    ),
+                    true
+            );
         }
 
         level.playSound(

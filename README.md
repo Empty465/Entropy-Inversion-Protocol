@@ -51,7 +51,7 @@ Crouch and right-click with the Requestor to choose a mode. Hover over a mode to
 
 ## Future Plans
 
-- Cutscenes will be revised to better fit each attack mode.
+- Test in multiplayer environments.
 
 ---
 
@@ -105,4 +105,4 @@ Crouch and right-click with the Requestor to choose a mode. Hover over a mode to
 
 ## 향후 계획
 
-- 각 모드에 따른 컷씬 연출 변경
+- 멀티플레이 환경 테스트

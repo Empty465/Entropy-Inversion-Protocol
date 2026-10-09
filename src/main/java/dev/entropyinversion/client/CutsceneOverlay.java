@@ -38,6 +38,8 @@ public final class CutsceneOverlay {
     private static final float IMPACT_SCENE_START = 0.51F;
     private static final float IMPACT_BEAM_END = 0.72F;
     private static final float ASTEROID_COVER_END = 0.5F;
+    private static final float MICROBOT_BACKGROUND_FADE_START = 0.48F;
+    private static final float MICROBOT_BACKGROUND_CLEAR = 0.5F;
     private static final int STAR_COUNT = 176;
     private static final int SCANLINE_COUNT = 30;
     private static final int CHARGE_PARTICLE_INTERVAL = 2;
@@ -102,7 +104,7 @@ public final class CutsceneOverlay {
             }
 
             float progress = (minecraft.level.getGameTime() - startedAt) / (float) duration;
-            if (attackMode == AttackMode.ASTEROID_BOMBARDMENT && progress >= ASTEROID_COVER_END) {
+            if (attackMode != AttackMode.ENTROPY_INVERSION) {
                 return;
             }
             spawnChargeParticles(minecraft, progress);
@@ -132,6 +134,8 @@ public final class CutsceneOverlay {
                 );
             }
         }
+
+
     }
 
     private static void drawMeteors(
@@ -163,6 +167,338 @@ public final class CutsceneOverlay {
         }
     }
 
+    private static void drawDedicatedCutsceneFrame(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress,
+            int accentColor,
+            Component systemLabel
+    ) {
+        int barHeight = Math.max(12, height / 22);
+        int meterWidth = Math.max(80, width / 3);
+        int meterLeft = (width - meterWidth) / 2;
+        int meterY = height - barHeight + 5;
+        event.getGuiGraphics().fill(0, 0, width, barHeight, 0xE004080B);
+        event.getGuiGraphics().fill(0, height - barHeight, width, height, 0xE004080B);
+        event.getGuiGraphics().fill(meterLeft, meterY, meterLeft + meterWidth, meterY + 3, 0xFF26363A);
+        int filled = (int) (meterWidth * clamp01(progress));
+        if (filled > 0) {
+            event.getGuiGraphics().fill(meterLeft, meterY, meterLeft + filled, meterY + 3, accentColor);
+        }
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                systemLabel,
+                12,
+                height - barHeight + 5,
+                accentColor
+        );
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                Component.literal(String.format(java.util.Locale.ROOT, "%03d%%", (int) (progress * 100.0F))),
+                width - 42,
+                height - barHeight + 5,
+                accentColor
+        );
+    }
+
+    private static void drawAsteroidCutscene(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        float descent = clamp01(progress / ASTEROID_COVER_END);
+        float fade = clamp01((ASTEROID_COVER_END - progress) / 0.07F);
+        int alpha = (int) (255.0F * fade);
+        int centerX = width / 2;
+        int surfaceY = height * 4 / 5;
+        int planetRadius = Math.max(24, Math.min(width / 3, height / 3));
+        int planetCenterY = surfaceY + planetRadius;
+        int meteorSize = Math.max(24, Math.min(width / 10, height / 8));
+        int meteorX = centerX;
+        int meteorY = height / 9 + (int) (descent * height * 0.46F);
+
+        event.getGuiGraphics().fill(0, 0, width, height, (alpha << 24) | 0x00070710);
+        drawStars(event, width, height, fade, progress * 0.7F);
+        drawPlanet(event, centerX, planetCenterY, planetRadius, fade);
+        drawEllipse(
+                event,
+                centerX,
+                surfaceY,
+                planetRadius + 8,
+                Math.max(5, planetRadius / 8),
+                ((int) (fade * 170.0F) << 24) | 0x00FF7A32
+        );
+
+        for (int i = 0; i < 7; i++) {
+            int trailWidth = meteorSize / 5 + (i % 3) * 2;
+            int trailLength = meteorSize + i * 9;
+            int offsetX = (i - 3) * Math.max(2, meteorSize / 10);
+            int trailAlpha = (int) (fade * (150 - i * 12));
+            drawScaledSegment(
+                    event,
+                    meteorX,
+                    meteorY,
+                    1.0F,
+                    offsetX,
+                    -meteorSize / 3 - 6,
+                    offsetX - meteorSize / 5,
+                    -meteorSize / 3 - trailLength,
+                    trailWidth,
+                    (trailAlpha << 24) | (i % 2 == 0 ? 0x00FF5425 : 0xFFFFC04D)
+            );
+        }
+
+        int rock = (alpha << 24) | 0x00322B2A;
+        int rockLight = (alpha << 24) | 0x00705A46;
+        int glow = ((int) (fade * 235.0F) << 24) | 0x00FFB84A;
+        event.getGuiGraphics().fill(
+                meteorX - meteorSize / 2,
+                meteorY - meteorSize / 3,
+                meteorX + meteorSize / 2,
+                meteorY + meteorSize / 3,
+                rock
+        );
+        event.getGuiGraphics().fill(
+                meteorX - meteorSize / 3,
+                meteorY - meteorSize / 2,
+                meteorX + meteorSize / 3,
+                meteorY + meteorSize / 2,
+                rock
+        );
+        event.getGuiGraphics().fill(
+                meteorX - meteorSize / 3,
+                meteorY - meteorSize / 3,
+                meteorX + meteorSize / 4,
+                meteorY - meteorSize / 8,
+                rockLight
+        );
+        event.getGuiGraphics().fill(
+                meteorX - 2,
+                meteorY - 2,
+                meteorX + 3,
+                meteorY + 3,
+                glow
+        );
+        drawEllipse(
+                event,
+                meteorX,
+                meteorY,
+                meteorSize,
+                Math.max(5, meteorSize / 3),
+                ((int) (fade * 95.0F) << 24) | 0x00FF6A24
+        );
+
+        int guideBottom = Math.min(height - 20, surfaceY);
+        int guideTop = Math.max(height / 10, meteorY + meteorSize / 2);
+        int guideX = width - Math.max(24, width / 18);
+        event.getGuiGraphics().fill(guideX, guideTop, guideX + 2, guideBottom, (alpha << 24) | 0x00D8D2C7);
+        event.getGuiGraphics().fill(
+                guideX - 5,
+                guideTop + (int) ((guideBottom - guideTop) * descent),
+                guideX + 8,
+                guideTop + (int) ((guideBottom - guideTop) * descent) + 2,
+                glow
+        );
+        drawSceneLabels(
+                event,
+                width,
+                height,
+                fade,
+                getStageKey(progress)
+        );
+        drawDedicatedCutsceneFrame(
+                event,
+                width,
+                height,
+                descent,
+                0xFFFF8742,
+                Component.translatable("gui.entropyinversion.cutscene.asteroid.system")
+        );
+        int targetColor = ((int) (fade * 230.0F) << 24) | 0x00FF9C42;
+        drawEllipse(event, centerX, surfaceY, Math.max(10, strikeRadius), 5, targetColor);
+        drawScaledCenteredString(
+                event,
+                Minecraft.getInstance(),
+                String.format(
+                        java.util.Locale.ROOT,
+                        "00:%02d",
+                        Math.max(0, (int) Math.ceil((1.0F - progress) * duration / 20.0F))
+                ),
+                centerX,
+                height - Math.max(24, height / 18) + 5,
+                1.5F,
+                0xFFFFD49A
+        );
+    }
+
+    private static void drawMicrobotCutscene(
+            RenderGuiOverlayEvent.Post event,
+            int width,
+            int height,
+            float progress
+    ) {
+        int centerX = width / 2;
+        int centerY = height / 2;
+        float sweep = progress * 8.0F;
+        float release = clamp01(progress / 0.25F);
+        float terminate = clamp01((progress - 0.72F) / 0.28F);
+        float backgroundOpacity = 1.0F - clamp01(
+                (progress - MICROBOT_BACKGROUND_FADE_START)
+                        / (MICROBOT_BACKGROUND_CLEAR - MICROBOT_BACKGROUND_FADE_START)
+        );
+        int backgroundAlpha = (int) (255.0F * backgroundOpacity);
+        if (backgroundAlpha > 0) {
+            event.getGuiGraphics().fill(
+                    0,
+                    0,
+                    width,
+                    height,
+                    (backgroundAlpha << 24) | 0x00030B0B
+            );
+        }
+
+        int gridColor = ((int) (38.0F * backgroundOpacity) << 24) | 0x0030B78D;
+        int gridStep = Math.max(18, width / 36);
+        for (int x = Math.floorMod((int) (progress * 40.0F), gridStep); x < width; x += gridStep) {
+            event.getGuiGraphics().fill(x, 0, x + 1, height, gridColor);
+        }
+        for (int y = Math.floorMod((int) (progress * 24.0F), gridStep); y < height; y += gridStep) {
+            event.getGuiGraphics().fill(0, y, width, y + 1, gridColor);
+        }
+
+        int targetY = centerY + 8;
+        int targetColor = ((int) (255.0F * (0.35F + terminate * 0.65F)) << 24)
+                | (terminate > 0.0F ? 0x00FF5D5D : 0x005CE6B5);
+        int silhouetteWidth = Math.max(18, Math.min(width / 18, 38));
+        int silhouetteHeight = Math.max(56, Math.min(height / 3, 110));
+        int headSize = Math.max(10, silhouetteWidth / 2);
+        drawEllipse(event, centerX, targetY - silhouetteHeight / 2, headSize, headSize, targetColor);
+        event.getGuiGraphics().fill(
+                centerX - silhouetteWidth / 3,
+                targetY - silhouetteHeight / 2 + headSize,
+                centerX + silhouetteWidth / 3 + 1,
+                targetY + silhouetteHeight / 4,
+                targetColor
+        );
+        drawScaledSegment(event, centerX, targetY, 1.0F,
+                -silhouetteWidth / 4, 0, -silhouetteWidth, silhouetteHeight / 3, 4, targetColor);
+        drawScaledSegment(event, centerX, targetY, 1.0F,
+                silhouetteWidth / 4, 0, silhouetteWidth, silhouetteHeight / 3, 4, targetColor);
+        drawScaledSegment(event, centerX, targetY, 1.0F,
+                -silhouetteWidth / 5, silhouetteHeight / 4, -silhouetteWidth / 2, silhouetteHeight / 2, 4, targetColor);
+        drawScaledSegment(event, centerX, targetY, 1.0F,
+                silhouetteWidth / 5, silhouetteHeight / 4, silhouetteWidth / 2, silhouetteHeight / 2, 4, targetColor);
+
+        int scanY = Math.floorMod((int) (progress * height * 2.0F), Math.max(1, height));
+        int scanAlpha = (int) (85.0F * backgroundOpacity);
+        event.getGuiGraphics().fill(
+                0,
+                scanY,
+                width,
+                scanY + 2,
+                (scanAlpha << 24) | 0x003CE8AB
+        );
+        drawEllipse(
+                event,
+                centerX,
+                targetY,
+                Math.max(18, width / 10),
+                Math.max(12, height / 12),
+                ((int) (90.0F + 120.0F * terminate) << 24) | 0x0037F4B0
+        );
+
+        int particleCount = 84;
+        double swarmRadius = Math.max(28.0D, Math.min(width, height) * (0.34D - release * 0.18D));
+        for (int i = 0; i < particleCount; i++) {
+            double baseAngle = Math.PI * 2.0D * i / particleCount;
+            double angle = baseAngle + sweep * (0.55D + (i % 5) * 0.08D);
+            double radius = swarmRadius * (0.72D + (i % 7) * 0.045D);
+            int x = centerX + (int) (Math.cos(angle) * radius);
+            int y = centerY + (int) (Math.sin(angle) * radius * 0.72D);
+            int dotSize = i % 9 == 0 ? 3 : 2;
+            int color = i % 4 == 0 ? 0xFFE8FFB3 : 0xFF43EBA7;
+            event.getGuiGraphics().fill(x, y, x + dotSize, y + dotSize, color);
+            if (i % 3 == 0) {
+                drawScaledSegment(
+                        event,
+                        x,
+                        y,
+                        1.0F,
+                        0,
+                        0,
+                        centerX - x,
+                        centerY - y,
+                        1,
+                        0x5535DFA3
+                );
+            }
+        }
+
+        for (int i = 0; i < 4; i++) {
+            int ringRadius = Math.max(24, Math.min(width, height) / 5 + i * 13);
+            int ringY = Math.max(8, ringRadius / 3);
+            int ringAlpha = (int) (150.0F * (1.0F - terminate * 0.65F));
+            drawEllipse(
+                    event,
+                    centerX,
+                    centerY,
+                    ringRadius,
+                    ringY,
+                    (ringAlpha << 24) | (i % 2 == 0 ? 0x0039DDA3 : 0x007EF2C3)
+            );
+        }
+
+        int panelTop = Math.max(42, height / 10);
+        event.getGuiGraphics().fill(12, panelTop, 142, panelTop + 36, 0xB2081715);
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                Component.translatable(
+                        terminate > 0.0F
+                                ? "gui.entropyinversion.cutscene.microbots.terminating"
+                                : "gui.entropyinversion.cutscene.microbots.locked"
+                ),
+                20,
+                panelTop + 7,
+                0xFF9DFFD6
+        );
+        event.getGuiGraphics().drawString(
+                Minecraft.getInstance().font,
+                Component.translatable("gui.entropyinversion.cutscene.microbots.density"),
+                20,
+                panelTop + 20,
+                0xFF4DCEA2
+        );
+        int barWidth = 112;
+        event.getGuiGraphics().fill(20, panelTop + 31, 20 + barWidth, panelTop + 34, 0xFF173B30);
+        int fillWidth = (int) (barWidth * clamp01(release + terminate * 0.35F));
+        event.getGuiGraphics().fill(20, panelTop + 31, 20 + fillWidth, panelTop + 34, 0xFF56EBAA);
+
+        drawSceneLabels(event, width, height, 1.0F, getStageKey(progress));
+        drawDedicatedCutsceneFrame(
+                event,
+                width,
+                height,
+                progress,
+                0xFF46E7A7,
+                Component.translatable("gui.entropyinversion.cutscene.microbots.system")
+        );
+        drawScaledCenteredString(
+                event,
+                Minecraft.getInstance(),
+                String.format(
+                        java.util.Locale.ROOT,
+                        "00:%02d",
+                        Math.max(0, (int) Math.ceil((1.0F - progress) * duration / 20.0F))
+                ),
+                centerX,
+                height - Math.max(24, height / 18) + 5,
+                1.5F,
+                0xFFB8FFE0
+        );
+    }
+
     @SubscribeEvent
     public static void onGuiOverlay(RenderGuiOverlayEvent.Post event) {
         if (!active || event.getOverlay() != VanillaGuiOverlay.HOTBAR.type()) {
@@ -178,13 +514,20 @@ public final class CutsceneOverlay {
                 1.0F,
                 (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
         );
-        boolean asteroid = attackMode == AttackMode.ASTEROID_BOMBARDMENT;
-        if (asteroid && progress >= ASTEROID_COVER_END) {
-            return;
-        }
-        float sceneEnd = asteroid ? ASTEROID_COVER_END : IMPACT_SCENE_START;
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
+        boolean asteroid = attackMode == AttackMode.ASTEROID_BOMBARDMENT;
+        if (asteroid) {
+            if (progress < ASTEROID_COVER_END) {
+                drawAsteroidCutscene(event, width, height, progress);
+            }
+            return;
+        }
+        if (attackMode == AttackMode.ANTI_ORGANIC_MICROBOTS) {
+            drawMicrobotCutscene(event, width, height, progress);
+            return;
+        }
+        float sceneEnd = IMPACT_SCENE_START;
         int centerX = width / 2;
         int centerY = height / 2;
         if (progress < sceneEnd) {
@@ -219,7 +562,7 @@ public final class CutsceneOverlay {
         float progress = (float) (
                 (minecraft.level.getGameTime() - startedAt + event.getPartialTick()) / duration
         );
-        if (progress < CHARGE_SCENE_START || attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
+        if (progress < CHARGE_SCENE_START || attackMode != AttackMode.ENTROPY_INVERSION) {
             return;
         }
 
@@ -956,18 +1299,18 @@ public final class CutsceneOverlay {
 
     private static String getStageKey(float progress) {
         if (attackMode == AttackMode.ASTEROID_BOMBARDMENT) {
-            if (progress < IMPACT_SCENE_START) {
+            if (progress < 0.24F) {
                 return "gui.entropyinversion.cutscene.asteroid_approach";
             }
-            return progress < IMPACT_BEAM_END
+            return progress < 0.42F
                     ? "gui.entropyinversion.cutscene.asteroid.impact"
                     : "gui.entropyinversion.cutscene.asteroid.crater";
         }
         if (attackMode == AttackMode.ANTI_ORGANIC_MICROBOTS) {
-            if (progress < IMPACT_SCENE_START) {
+            if (progress < 0.22F) {
                 return "gui.entropyinversion.cutscene.microbots.deploy";
             }
-            return progress < IMPACT_BEAM_END
+            return progress < 0.72F
                     ? "gui.entropyinversion.cutscene.microbots.sweep"
                     : "gui.entropyinversion.cutscene.microbots.terminate";
         }
