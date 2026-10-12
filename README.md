@@ -49,10 +49,6 @@ Crouch and right-click with the Requestor to choose a mode. Hover over a mode to
 - Target and radius-boundary particles appear while aiming.
 - The Requestor cannot be crafted; it is available in Creative mode.
 
-## Future Plans
-
-- Test in multiplayer environments.
-
 ---
 
 # 엔트로피 역전 프로토콜
@@ -102,7 +98,3 @@ Crouch and right-click with the Requestor to choose a mode. Hover over a mode to
 - 요청기는 소모되지 않으며, 타격 요청 후 10초의 재사용 대기시간이 있습니다.
 - 조준 시 목표 지점과 반경 경계에 입자 효과가 표시됩니다.
 - 요청기는 제작할 수 없으며 크리에이티브 모드에서 획득할 수 있습니다.
-
-## 향후 계획
-
-- 멀티플레이 환경 테스트
